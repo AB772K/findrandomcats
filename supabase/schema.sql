@@ -85,6 +85,13 @@ do $do$ begin
     check (bio is null or length(bio) <= 300);
 exception when duplicate_object then null; end $do$;
 
+-- Display names are unique the way Instagram handles usernames: case
+-- insensitive, so "Sarah" and "sarah" cannot both exist. Partial, because any
+-- number of people may still have no display name at all.
+create unique index if not exists profiles_display_name_lower_key
+  on public.profiles (lower(display_name))
+  where display_name is not null;
+
 do $do$ begin
   alter table public.profiles add constraint profiles_daily_notes_spent_nonneg
     check (daily_notes_spent >= 0);
@@ -122,9 +129,21 @@ create table if not exists public.comments (
   created_at timestamptz not null default now()
 );
 
+-- How many times random_cat() / random_commented_cat() has served this cat.
+-- Bumped inside those functions so a view is only counted when a cat is
+-- actually handed to a viewer, not on every render of an already-loaded card.
+alter table public.cats add column if not exists view_count integer not null default 0;
+
+do $do$ begin
+  alter table public.cats add constraint cats_view_count_nonneg check (view_count >= 0);
+exception when duplicate_object then null; end $do$;
+
 -- Which wallet paid for this comment. Drives the premium styling in the UI and
 -- is set inside post_comment(), never by the client.
 alter table public.comments add column if not exists used_premium_note boolean not null default false;
+
+-- Set by edit_comment(); null means the comment has never been changed.
+alter table public.comments add column if not exists edited_at timestamptz;
 
 create index if not exists comments_cat_id_created_at_idx on public.comments (cat_id, created_at desc);
 create index if not exists comments_user_id_idx on public.comments (user_id);
@@ -160,6 +179,20 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
+
+-- --------------------------------------------------- comment edit window
+-- How long after posting a comment may still be changed or removed. Defined
+-- once here so the RLS policy, edit_comment(), delete_comment() and the value
+-- the UI counts down to can never drift apart.
+create or replace function public.comment_edit_window()
+returns interval
+language sql
+immutable
+as $fn$
+  select interval '10 minutes';
+$fn$;
+
+grant execute on function public.comment_edit_window() to anon, authenticated;
 
 -- ------------------------------------------------------------------ RLS
 alter table public.profiles enable row level security;
@@ -208,23 +241,82 @@ drop policy if exists "comments: authenticated read" on public.comments;
 create policy "comments: authenticated read" on public.comments
   for select to authenticated using (true);
 
+-- The 10-minute window is enforced HERE, in the policy, not just by hiding a
+-- button. A direct PostgREST delete of an older comment matches no rows.
 drop policy if exists "comments: delete own" on public.comments;
 create policy "comments: delete own" on public.comments
-  for delete to authenticated using (auth.uid() = user_id);
+  for delete to authenticated
+  using (
+    auth.uid() = user_id
+    and created_at > now() - public.comment_edit_window()
+  );
+-- Likewise there is no UPDATE policy at all: edits must go through
+-- edit_comment(), which re-checks ownership and the window.
 -- NOTE: there is deliberately no INSERT policy. Comments must go through
 -- post_comment(), which charges the NOTE in the same transaction.
 
 -- ------------------------------------------------------------ random cat
+-- Volatile plpgsql rather than a stable sql function now: serving a cat also
+-- counts a view, so this writes.
 create or replace function public.random_cat(exclude_ids uuid[] default '{}')
 returns setof public.cats
-language sql
-stable
+language plpgsql
 as $fn$
-  select *
-  from public.cats
-  where not (id = any (exclude_ids))
+declare
+  v_id uuid;
+begin
+  select c.id into v_id
+  from public.cats c
+  where not (c.id = any (exclude_ids))
   order by random()
   limit 1;
+
+  if v_id is null then
+    return;
+  end if;
+
+  return query
+    update public.cats
+    set view_count = view_count + 1
+    where id = v_id
+    returning *;
+end;
+$fn$;
+
+-- ------------------------------------------------- random commented cat
+-- Cats scroll past and their comment threads become unreachable, so the feed
+-- deliberately loops back to ones people have talked about. Weighted by comment
+-- count via -ln(random()) / weight, which draws each row with probability
+-- proportional to its weight, so a busy thread resurfaces more often than one
+-- with a single reply -- without ever pinning the same cat to the top.
+create or replace function public.random_commented_cat(exclude_ids uuid[] default '{}')
+returns setof public.cats
+language plpgsql
+as $fn$
+declare
+  v_id uuid;
+begin
+  select c.id into v_id
+  from public.cats c
+  join (
+    select cat_id, count(*)::int as n
+    from public.comments
+    group by cat_id
+  ) t on t.cat_id = c.id
+  where not (c.id = any (exclude_ids))
+  order by -ln(random()) / t.n
+  limit 1;
+
+  if v_id is null then
+    return;
+  end if;
+
+  return query
+    update public.cats
+    set view_count = view_count + 1
+    where id = v_id
+    returning *;
+end;
 $fn$;
 
 -- --------------------------------------------------- anonymous aggregates
@@ -252,6 +344,7 @@ $fn$;
 
 grant execute on function public.cat_rating_summary(uuid) to anon, authenticated;
 grant execute on function public.random_cat(uuid[]) to anon, authenticated;
+grant execute on function public.random_commented_cat(uuid[]) to anon, authenticated;
 
 -- ------------------------------------------- comments with their authors
 -- Comments live behind RLS and profiles are readable only by their owner, so a
@@ -268,10 +361,13 @@ returns table (
   cat_id              uuid,
   body                text,
   created_at          timestamptz,
+  edited_at           timestamptz,
   used_premium_note   boolean,
   author_id           uuid,
   display_name        text,
-  profile_picture_url text
+  profile_picture_url text,
+  is_mine             boolean,
+  editable_until      timestamptz
 )
 language sql
 stable
@@ -282,10 +378,15 @@ as $fn$
          c.cat_id,
          c.body,
          c.created_at,
+         c.edited_at,
          c.used_premium_note,
          p.id,
          p.display_name,
-         p.profile_picture_url
+         p.profile_picture_url,
+         -- Ownership as a bare boolean: the UI needs to know whether to offer
+         -- edit/delete without ever learning whose user_id owns a comment.
+         c.user_id = auth.uid(),
+         c.created_at + public.comment_edit_window()
   from public.comments c
   left join public.profiles p on p.user_id = c.user_id
   where c.cat_id = p_cat_id
@@ -382,15 +483,22 @@ begin
     raise exception 'You must be signed in.' using errcode = '42501';
   end if;
 
-  update public.profiles
-  set display_name        = nullif(btrim(coalesce(p_display_name, '')), ''),
-      bio                 = nullif(btrim(coalesce(p_bio, '')), ''),
-      profile_picture_url = coalesce(
-                              nullif(btrim(coalesce(p_profile_picture_url, '')), ''),
-                              profile_picture_url
-                            )
-  where user_id = auth.uid()
-  returning * into v_profile;
+  begin
+    update public.profiles
+    set display_name        = nullif(btrim(coalesce(p_display_name, '')), ''),
+        bio                 = nullif(btrim(coalesce(p_bio, '')), ''),
+        profile_picture_url = coalesce(
+                                nullif(btrim(coalesce(p_profile_picture_url, '')), ''),
+                                profile_picture_url
+                              )
+    where user_id = auth.uid()
+    returning * into v_profile;
+  exception when unique_violation then
+    -- Only one unique index can fire here, so this is unambiguous. Caught and
+    -- reworded because the raw message names the index, which tells the user
+    -- nothing about what to do next.
+    raise exception 'That name is already taken.' using errcode = '23505';
+  end;
 
   if not found then
     raise exception 'No profile found for this account.' using errcode = 'P0002';
@@ -562,6 +670,93 @@ end;
 $fn$;
 
 grant execute on function public.post_comment(uuid, text, boolean) to authenticated;
+
+-- ------------------------------------------- edit / delete your comment
+-- Editing never touches either wallet: the NOTE bought the comment, not the
+-- wording, so a correction is free and a deletion is not refunded (otherwise
+-- post-then-delete would be a way to comment for nothing).
+create or replace function public.edit_comment(p_comment_id uuid, p_body text)
+returns public.comments
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+declare
+  v_comment public.comments;
+begin
+  if auth.uid() is null then
+    raise exception 'You must be signed in.' using errcode = '42501';
+  end if;
+
+  if length(btrim(coalesce(p_body, ''))) = 0 then
+    raise exception 'Comment cannot be empty.' using errcode = '22023';
+  end if;
+
+  if length(btrim(p_body)) > 2000 then
+    raise exception 'Comments are capped at 2000 characters.' using errcode = '22023';
+  end if;
+
+  select * into v_comment from public.comments where id = p_comment_id;
+
+  if not found then
+    raise exception 'That comment no longer exists.' using errcode = 'P0002';
+  end if;
+
+  if v_comment.user_id <> auth.uid() then
+    raise exception 'You can only edit your own comments.' using errcode = '42501';
+  end if;
+
+  if v_comment.created_at <= now() - public.comment_edit_window() then
+    raise exception 'The edit window for this comment has closed.' using errcode = 'P0001';
+  end if;
+
+  update public.comments
+  set body = btrim(p_body),
+      edited_at = now()
+  where id = p_comment_id
+  returning * into v_comment;
+
+  return v_comment;
+end;
+$fn$;
+
+grant execute on function public.edit_comment(uuid, text) to authenticated;
+
+-- The delete policy above already enforces ownership and the window; this
+-- wrapper exists so the UI can tell "too late" apart from "never existed"
+-- instead of reporting a silent zero-row delete as success.
+create or replace function public.delete_comment(p_comment_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+declare
+  v_comment public.comments;
+begin
+  if auth.uid() is null then
+    raise exception 'You must be signed in.' using errcode = '42501';
+  end if;
+
+  select * into v_comment from public.comments where id = p_comment_id;
+
+  if not found then
+    raise exception 'That comment no longer exists.' using errcode = 'P0002';
+  end if;
+
+  if v_comment.user_id <> auth.uid() then
+    raise exception 'You can only delete your own comments.' using errcode = '42501';
+  end if;
+
+  if v_comment.created_at <= now() - public.comment_edit_window() then
+    raise exception 'The edit window for this comment has closed.' using errcode = 'P0001';
+  end if;
+
+  delete from public.comments where id = p_comment_id;
+end;
+$fn$;
+
+grant execute on function public.delete_comment(uuid) to authenticated;
 
 -- --------------------------------------------------- buying premium notes
 -- Payments are NOT live. There is deliberately no function here that adds to

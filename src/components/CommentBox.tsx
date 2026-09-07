@@ -2,93 +2,23 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import Avatar from '@/components/Avatar';
-import { displayNameOf } from '@/lib/avatar';
+import CommentItem from '@/components/CommentItem';
 import type { CommentRow, NoteKind, NotesWallet } from '@/lib/types';
-
-function CommentItem({ comment }: { comment: CommentRow }) {
-  const name = displayNameOf(comment.display_name);
-  const premium = comment.used_premium_note;
-
-  const avatar = (
-    <Avatar
-      name={comment.display_name}
-      url={comment.profile_picture_url}
-      seed={comment.author_id}
-      size="md"
-    />
-  );
-
-  return (
-    <li className="flex gap-3">
-      {/* A deleted account leaves the comment but has no profile to link to. */}
-      {comment.author_id ? (
-        <Link href={`/u/${comment.author_id}`} className="transition duration-200 hover:opacity-80">
-          {avatar}
-        </Link>
-      ) : (
-        avatar
-      )}
-
-      <div className="min-w-0 flex-1">
-        {/* Premium comments get a slow-drifting pastel border: a 1px gradient
-            frame (padding + inner fill), not a glow, so it reads as a nicer
-            edge rather than something plastic. */}
-        <div
-          className={
-            premium
-              ? 'animate-shimmer rounded-2xl rounded-tl-md bg-[linear-gradient(110deg,#e3a5c0,#bcaee2,#e3a5c0)] bg-[length:200%_100%] p-px'
-              : ''
-          }
-        >
-          <div
-            className={`rounded-2xl rounded-tl-md px-4 py-2.5 ${
-              premium ? 'bg-paper' : 'border border-blush-100 bg-paper shadow-soft'
-            }`}
-          >
-            <div className="flex items-baseline gap-2">
-              {comment.author_id ? (
-                <Link
-                  href={`/u/${comment.author_id}`}
-                  className="font-display text-sm font-semibold text-ink transition hover:text-blush-500"
-                >
-                  {name}
-                </Link>
-              ) : (
-                <span className="font-display text-sm font-semibold text-ink/60">{name}</span>
-              )}
-              {premium ? (
-                <span
-                  title="Posted with a premium NOTE"
-                  className="rounded-full border border-lilac-200 bg-lilac-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-lilac-400"
-                >
-                  Premium
-                </span>
-              ) : null}
-            </div>
-            <p className="mt-0.5 whitespace-pre-wrap break-words text-sm text-ink/80">
-              {comment.body}
-            </p>
-          </div>
-        </div>
-        <p className="mt-1 pl-4 text-[11px] text-ink/40">
-          {new Date(comment.created_at).toLocaleString()}
-        </p>
-      </div>
-    </li>
-  );
-}
 
 export default function CommentBox({
   comments,
   wallet,
   signedIn,
   onPost,
+  onEdit,
+  onDelete,
 }: {
   comments: CommentRow[];
   wallet: NotesWallet | null;
   signedIn: boolean;
   onPost: (body: string, noteKind: NoteKind) => Promise<string | null>;
+  onEdit: (commentId: string, body: string) => Promise<string | null>;
+  onDelete: (commentId: string) => Promise<string | null>;
 }) {
   const [body, setBody] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -224,7 +154,12 @@ export default function CommentBox({
 
       <ul className="space-y-4">
         {comments.map((comment) => (
-          <CommentItem key={comment.id} comment={comment} />
+          <CommentItem
+            key={comment.id}
+            comment={comment}
+            onEdit={onEdit}
+            onDelete={onDelete}
+          />
         ))}
       </ul>
 

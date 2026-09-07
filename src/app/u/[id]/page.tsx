@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import Avatar from '@/components/Avatar';
 import { displayNameOf } from '@/lib/avatar';
 import { createClient } from '@/lib/supabase/server';
-import type { PublicProfile, RatingTally } from '@/lib/types';
+import type { Cat, PublicProfile, RatingTally } from '@/lib/types';
 
 // Profiles change whenever someone comments, so render per request.
 export const dynamic = 'force-dynamic';
@@ -35,9 +35,19 @@ export default async function PublicProfilePage({ params }: { params: { id: stri
   // cat_rating_summary(). Nothing here reads profiles or ratings directly, so
   // RLS cannot leak either wallet balance, the email, or which cats they rated.
   // Lifetime spend is public; what is left in the wallet is not.
-  const [profileResult, ratingsResult] = await Promise.all([
+  // Uploads are the exception: `cats` is world-readable by policy, so the grid
+  // needs no aggregate wrapper -- and uploaded_by already holds a profiles.id,
+  // never a user_id.
+  const [profileResult, ratingsResult, uploadsResult] = await Promise.all([
     supabase.rpc('public_profile', { p_profile_id: params.id }),
     supabase.rpc('profile_rating_summary', { p_profile_id: params.id }),
+    supabase
+      .from('cats')
+      .select('*')
+      .eq('uploaded_by', params.id)
+      .eq('source_type', 'user_upload')
+      .order('created_at', { ascending: false })
+      .limit(60),
   ]);
 
   const profile = (profileResult.data as PublicProfile[] | null)?.[0];
@@ -52,6 +62,7 @@ export default async function PublicProfilePage({ params }: { params: { id: stri
       ? tallies.reduce((sum, t) => sum + t.stars * Number(t.count), 0) / totalRatings
       : null;
 
+  const uploads = (uploadsResult.data ?? []) as Cat[];
   const name = displayNameOf(profile.display_name);
 
   return (
@@ -89,6 +100,42 @@ export default async function PublicProfilePage({ params }: { params: { id: stri
         <Stat value={Number(profile.daily_notes_spent)} label="notes spent" />
         <Stat value={Number(profile.premium_notes_spent)} label="premium notes spent" />
         <Stat value={average === null ? '—' : `${average.toFixed(1)}/10`} label="average given" />
+      </section>
+
+      <section className="card space-y-4 p-6">
+        <div className="flex items-baseline justify-between gap-3">
+          <h2 className="font-display text-base font-semibold">Cats they uploaded</h2>
+          <span className="text-xs text-ink/45">
+            {uploads.length} {uploads.length === 1 ? 'cat' : 'cats'}
+          </span>
+        </div>
+
+        {uploads.length === 0 ? (
+          <p className="text-sm text-ink/45">They have not uploaded a cat yet.</p>
+        ) : (
+          <ul className="grid grid-cols-3 gap-1.5 sm:gap-2">
+            {uploads.map((cat) => (
+              <li key={cat.id}>
+                <Link
+                  href={`/c/${cat.id}`}
+                  title={cat.caption ?? 'A cat'}
+                  className="group relative block aspect-square overflow-hidden rounded-xl bg-lilac-50"
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={cat.image_url}
+                    alt={cat.caption ?? 'A cat'}
+                    loading="lazy"
+                    className="h-full w-full object-cover transition duration-300 group-hover:scale-[1.03]"
+                  />
+                  <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/45 to-transparent px-2 py-1 text-[10px] font-medium text-white opacity-0 transition duration-200 group-hover:opacity-100">
+                    {cat.view_count.toLocaleString()} views
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className="card space-y-4 p-6">

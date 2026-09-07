@@ -7,12 +7,18 @@ import CommentBox from '@/components/CommentBox';
 import RatingBreakdown from '@/components/RatingBreakdown';
 import StarPicker from '@/components/StarPicker';
 import VideoAdSlot from '@/components/VideoAdSlot';
-import { fetchRandomCat, postComment, rateCat } from '@/lib/actions';
+import { deleteComment, editComment, fetchRandomCat, postComment, rateCat } from '@/lib/actions';
 import type { CatBundle, NoteKind, NotesWallet } from '@/lib/types';
 
 const CATS_PER_AD = 2;
 /** The rewarded-video placeholder is rarer than the banner so it stays a treat. */
 const CATS_PER_VIDEO_AD = 6;
+/**
+ * Every 4th cat is pulled from the pool that already has comments, so threads
+ * people wrote stay reachable instead of being lost the moment the feed moves
+ * on. Counts fresh pulls only, so a run of commented cats cannot starve it.
+ */
+const FRESH_CATS_PER_COMMENTED = 3;
 
 export default function CatFeed({
   signedIn,
@@ -25,6 +31,7 @@ export default function CatFeed({
   const [wallet, setWallet] = useState(initialWallet);
   const [seenIds, setSeenIds] = useState<string[]>([]);
   const [viewed, setViewed] = useState(0);
+  const [freshRun, setFreshRun] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,8 +42,10 @@ export default function CatFeed({
   const findCat = useCallback(async () => {
     setLoading(true);
     setError(null);
+
+    const wantCommented = freshRun >= FRESH_CATS_PER_COMMENTED;
     try {
-      const next = await fetchRandomCat(seenIds);
+      const next = await fetchRandomCat(seenIds, wantCommented);
       if (!next) {
         setError('No cats in the database yet. Run `npm run seed` or upload one.');
         return;
@@ -44,12 +53,15 @@ export default function CatFeed({
       setBundle(next);
       setSeenIds((prev) => (prev.includes(next.cat.id) ? prev : [...prev, next.cat.id]));
       setViewed((prev) => prev + 1);
+      // Reset only when the commented pull actually produced a commented cat;
+      // it falls back to a fresh one when nothing has been commented on yet.
+      setFreshRun((prev) => (wantCommented && next.comments.length > 0 ? 0 : prev + 1));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not fetch a cat.');
     } finally {
       setLoading(false);
     }
-  }, [seenIds]);
+  }, [seenIds, freshRun]);
 
   const handleRate = useCallback(
     async (stars: number) => {
@@ -72,6 +84,28 @@ export default function CatFeed({
 
       setBundle({ ...bundle, comments: result.comments });
       setWallet(result.wallet);
+      return null;
+    },
+    [bundle],
+  );
+
+  const handleEdit = useCallback(
+    async (commentId: string, body: string) => {
+      if (!bundle) return 'No cat loaded.';
+      const result = await editComment(bundle.cat.id, commentId, body);
+      if (!result.ok) return result.error;
+      setBundle({ ...bundle, comments: result.comments });
+      return null;
+    },
+    [bundle],
+  );
+
+  const handleDelete = useCallback(
+    async (commentId: string) => {
+      if (!bundle) return 'No cat loaded.';
+      const result = await deleteComment(bundle.cat.id, commentId);
+      if (!result.ok) return result.error;
+      setBundle({ ...bundle, comments: result.comments });
       return null;
     },
     [bundle],
@@ -106,7 +140,11 @@ export default function CatFeed({
 
           <div className="space-y-4 border-t border-lilac-100 pt-5">
             <StarPicker myStars={bundle.myStars} disabled={!signedIn} onRate={handleRate} />
-            <RatingBreakdown tallies={bundle.tallies} totalRatings={bundle.totalRatings} />
+            <RatingBreakdown
+              tallies={bundle.tallies}
+              totalRatings={bundle.totalRatings}
+              viewCount={bundle.cat.view_count}
+            />
           </div>
 
           <div className="border-t border-lilac-100 pt-5">
@@ -115,6 +153,8 @@ export default function CatFeed({
               wallet={wallet}
               signedIn={signedIn}
               onPost={handleComment}
+              onEdit={handleEdit}
+              onDelete={handleDelete}
             />
           </div>
         </article>

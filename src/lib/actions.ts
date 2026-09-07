@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { NO_CAT_MESSAGE, UNAVAILABLE_MESSAGE, detectCat } from '@/lib/cat-detector';
 import { findNotePackage } from '@/lib/notes';
 import { PROFANITY_MESSAGE, isProfane } from '@/lib/profanity';
 import type {
@@ -57,10 +58,22 @@ async function loadBundle(cat: Cat): Promise<CatBundle> {
  * Pulls one random cat, avoiding ones already seen this session so a short
  * browse does not keep serving the same face.
  */
-export async function fetchRandomCat(seenIds: string[] = []): Promise<CatBundle | null> {
+export async function fetchRandomCat(
+  seenIds: string[] = [],
+  preferCommented = false,
+): Promise<CatBundle | null> {
   const supabase = createClient();
 
-  let { data, error } = await supabase.rpc('random_cat', { exclude_ids: seenIds });
+  // Every 4th pull asks for a cat that already has a thread, so comments people
+  // wrote do not vanish the moment the feed moves on. Early in a database's
+  // life there may be no commented cats at all, so this always falls back.
+  const rpc = preferCommented ? 'random_commented_cat' : 'random_cat';
+
+  let { data, error } = await supabase.rpc(rpc, { exclude_ids: seenIds });
+
+  if (!error && (!data || data.length === 0) && preferCommented) {
+    ({ data, error } = await supabase.rpc('random_cat', { exclude_ids: seenIds }));
+  }
 
   // Every cat seen already -- start over rather than dead-end the user.
   if (!error && (!data || data.length === 0) && seenIds.length > 0) {
@@ -71,6 +84,14 @@ export async function fetchRandomCat(seenIds: string[] = []): Promise<CatBundle 
 
   const cat = (data as Cat[] | null)?.[0];
   return cat ? loadBundle(cat) : null;
+}
+
+/** One cat by id, for the detail page reached from a profile's upload grid. */
+export async function fetchCat(catId: string): Promise<CatBundle | null> {
+  const supabase = createClient();
+  const { data, error } = await supabase.from('cats').select('*').eq('id', catId).maybeSingle();
+  if (error || !data) return null;
+  return loadBundle(data as Cat);
 }
 
 /* ------------------------------------------------------------------ rating */
@@ -160,6 +181,52 @@ export async function postComment(
   };
 }
 
+export type CommentMutationResult =
+  | { ok: true; comments: CommentRow[] }
+  | { ok: false; error: string };
+
+async function reloadComments(catId: string): Promise<CommentRow[]> {
+  const supabase = createClient();
+  const { data } = await supabase.rpc('cat_comments', { p_cat_id: catId });
+  return (data ?? []) as CommentRow[];
+}
+
+/**
+ * Edits your own comment inside the 10-minute window. No NOTE moves: the NOTE
+ * paid for the comment, not for its wording.
+ */
+export async function editComment(
+  catId: string,
+  commentId: string,
+  body: string,
+): Promise<CommentMutationResult> {
+  const trimmed = body.trim();
+  if (!trimmed) return { ok: false, error: 'Write something first.' };
+  if (trimmed.length > 2000) return { ok: false, error: 'Comments are capped at 2000 characters.' };
+  if (isProfane(trimmed)) return { ok: false, error: PROFANITY_MESSAGE };
+
+  const supabase = createClient();
+  const { error } = await supabase.rpc('edit_comment', {
+    p_comment_id: commentId,
+    p_body: trimmed,
+  });
+  if (error) return { ok: false, error: error.message };
+
+  return { ok: true, comments: await reloadComments(catId) };
+}
+
+/** Deletes your own comment inside the same window. The NOTE is not refunded. */
+export async function deleteComment(
+  catId: string,
+  commentId: string,
+): Promise<CommentMutationResult> {
+  const supabase = createClient();
+  const { error } = await supabase.rpc('delete_comment', { p_comment_id: commentId });
+  if (error) return { ok: false, error: error.message };
+
+  return { ok: true, comments: await reloadComments(catId) };
+}
+
 /* ------------------------------------------------------------------- notes */
 
 const EMPTY_WALLET: NotesWallet = {
@@ -210,12 +277,22 @@ export async function uploadCat(formData: FormData): Promise<{ error: string } |
     .single();
   if (profileError) return { error: profileError.message };
 
+  // Verify there is actually a cat in there BEFORE anything is stored, so a
+  // rejected photo leaves nothing behind in the bucket to clean up.
+  const bytes = await file.arrayBuffer();
+  const check = await detectCat(bytes);
+  if (!check.ok) {
+    // 'unavailable' means we could not decide. Fail closed: an upload nobody
+    // checked is exactly what this is meant to prevent.
+    return { error: check.reason === 'no-cat' ? NO_CAT_MESSAGE : UNAVAILABLE_MESSAGE };
+  }
+
   const extension = (file.name.split('.').pop() ?? 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '');
   const path = `${user.id}/${Date.now()}.${extension || 'jpg'}`;
 
   const { error: storageError } = await supabase.storage
     .from('cat-photos')
-    .upload(path, file, { contentType: file.type, upsert: false });
+    .upload(path, bytes, { contentType: file.type, upsert: false });
   if (storageError) return { error: storageError.message };
 
   const {
@@ -236,7 +313,9 @@ export async function uploadCat(formData: FormData): Promise<{ error: string } |
 
 /* ----------------------------------------------------------------- profile */
 
-export type SaveProfileResult = { ok: true } | { ok: false; error: string };
+export type SaveProfileResult =
+  | { ok: true }
+  | { ok: false; error: string; field?: 'display_name' };
 
 /** The signed-in user's own editable fields, for the settings form. */
 export async function getMyProfile(): Promise<MyProfile | null> {
@@ -269,10 +348,16 @@ export async function saveProfile(formData: FormData): Promise<SaveProfileResult
   const displayName = String(formData.get('display_name') ?? '').trim();
   const bio = String(formData.get('bio') ?? '').trim();
 
-  if (displayName.length > 40) return { ok: false, error: 'Display names are capped at 40 characters.' };
+  if (displayName.length > 40) {
+    return { ok: false, error: 'Display names are capped at 40 characters.', field: 'display_name' };
+  }
   if (bio.length > 300) return { ok: false, error: 'Bios are capped at 300 characters.' };
   if (displayName && isProfane(displayName)) {
-    return { ok: false, error: 'Please pick a display name without that language.' };
+    return {
+      ok: false,
+      error: 'Please pick a display name without that language.',
+      field: 'display_name',
+    };
   }
   if (bio && isProfane(bio)) {
     return { ok: false, error: 'Please reword your bio without that language.' };
@@ -303,7 +388,18 @@ export async function saveProfile(formData: FormData): Promise<SaveProfileResult
     // null leaves the existing picture in place.
     p_profile_picture_url: pictureUrl,
   });
-  if (error) return { ok: false, error: error.message };
+  if (error) {
+    // update_my_profile() already rewords the unique violation, but a direct
+    // constraint error can still surface if the function is out of date.
+    const taken =
+      /already taken/i.test(error.message) ||
+      /profiles_display_name_lower_key|duplicate key/i.test(error.message);
+    return {
+      ok: false,
+      error: taken ? 'That name is already taken.' : error.message,
+      field: taken ? 'display_name' : undefined,
+    };
+  }
 
   revalidatePath('/settings');
   revalidatePath('/', 'layout');

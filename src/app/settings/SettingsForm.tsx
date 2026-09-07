@@ -13,12 +13,14 @@ export default function SettingsForm({ profile }: { profile: MyProfile | null })
   const [preview, setPreview] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [nameError, setNameError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setError(null);
+    setNameError(null);
     setSaved(false);
 
     const result = await saveProfile(new FormData(event.currentTarget));
@@ -28,6 +30,10 @@ export default function SettingsForm({ profile }: { profile: MyProfile | null })
       setSaved(true);
       // Pull the fresh avatar and name into the nav.
       router.refresh();
+    } else if (result.field === 'display_name') {
+      // Shown against the field itself -- "that name is taken" next to a
+      // generic form-level error is easy to miss.
+      setNameError(result.error);
     } else {
       setError(result.error);
     }
@@ -77,10 +83,24 @@ export default function SettingsForm({ profile }: { profile: MyProfile | null })
           type="text"
           maxLength={40}
           value={name}
-          onChange={(event) => setName(event.target.value)}
+          onChange={(event) => {
+            setName(event.target.value);
+            setNameError(null);
+          }}
           placeholder="Cat lover"
-          className="field"
+          aria-invalid={Boolean(nameError)}
+          aria-describedby={nameError ? 'display-name-error' : undefined}
+          className={`field ${nameError ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-100' : ''}`}
         />
+        {nameError ? (
+          <span id="display-name-error" className="block text-[11px] font-medium text-rose-600">
+            {nameError} Display names are unique, so pick another one.
+          </span>
+        ) : (
+          <span className="block text-[11px] text-ink/40">
+            Names are unique — no two cat people can share one.
+          </span>
+        )}
       </label>
 
       <label className="block space-y-1">

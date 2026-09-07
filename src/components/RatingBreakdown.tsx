@@ -1,14 +1,29 @@
 import type { RatingTally } from '@/lib/types';
 
+function Views({ count }: { count: number }) {
+  return (
+    <span className="text-xs text-ink/40">
+      {count.toLocaleString()} {count === 1 ? 'view' : 'views'}
+    </span>
+  );
+}
+
 export default function RatingBreakdown({
   tallies,
   totalRatings,
+  viewCount,
 }: {
   tallies: RatingTally[];
   totalRatings: number;
+  viewCount?: number;
 }) {
   if (totalRatings === 0) {
-    return <p className="text-sm text-ink/45">No ratings yet — be the first.</p>;
+    return (
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-sm text-ink/45">No ratings yet — be the first.</p>
+        {viewCount === undefined ? null : <Views count={viewCount} />}
+      </div>
+    );
   }
 
   const average =
@@ -19,11 +34,15 @@ export default function RatingBreakdown({
 
   return (
     <div className="space-y-3">
-      <p className="text-sm text-ink/65">
-        <span className="font-display text-base font-bold text-ink">{average.toFixed(1)}/10</span>{' '}
-        from{' '}
-        {totalRatings} {totalRatings === 1 ? 'rating' : 'ratings'}
-      </p>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="text-sm text-ink/65">
+          <span className="font-display text-base font-bold text-ink">
+            {average.toFixed(1)}/10
+          </span>{' '}
+          from {totalRatings} {totalRatings === 1 ? 'rating' : 'ratings'}
+        </p>
+        {viewCount === undefined ? null : <Views count={viewCount} />}
+      </div>
 
       <ul className="space-y-1">
         {rows.map((t) => {

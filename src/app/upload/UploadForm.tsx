@@ -13,10 +13,22 @@ export default function UploadForm() {
     setBusy(true);
     setError(null);
 
-    // A successful upload redirects, so anything returned here is a failure.
-    const result = await uploadCat(new FormData(event.currentTarget));
-    setBusy(false);
-    if (result?.error) setError(result.error);
+    try {
+      // A successful upload redirects, so anything returned here is a failure.
+      const result = await uploadCat(new FormData(event.currentTarget));
+      if (result?.error) setError(result.error);
+    } catch (cause) {
+      // A rejected action (body too large, network drop, a redirect that fails
+      // to follow) used to escape here uncaught, leaving the button stuck on
+      // "Uploading…" with nothing on screen to explain why.
+      setError(
+        cause instanceof Error && cause.message
+          ? `Upload failed: ${cause.message}`
+          : 'Upload failed. Check your connection and try again.',
+      );
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -63,10 +75,18 @@ export default function UploadForm() {
         disabled={busy}
         className="btn-primary w-full"
       >
-        {busy ? 'Uploading…' : 'Add to the cat pool'}
+        {busy ? 'Checking for a cat…' : 'Add to the cat pool'}
       </button>
 
-      {error ? <p className="rounded-2xl border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p> : null}
+      <p className="text-center text-[11px] text-ink/40">
+        Every upload is checked for an actual cat before it goes live, which takes a few seconds.
+      </p>
+
+      {error ? (
+        <p className="rounded-2xl border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+          {error}
+        </p>
+      ) : null}
     </form>
   );
 }

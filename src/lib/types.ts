@@ -9,6 +9,7 @@ export type Cat = {
   license: string | null;
   caption: string | null;
   uploaded_by: string | null;
+  view_count: number;
   created_at: string;
 };
 
@@ -78,11 +79,20 @@ export type CommentRow = {
   cat_id: string;
   body: string;
   created_at: string;
+  /** Null until the author edits it. */
+  edited_at: string | null;
   used_premium_note: boolean;
   author_id: string | null;
   display_name: string | null;
   profile_picture_url: string | null;
+  /** True only for the signed-in reader's own comments. */
+  is_mine: boolean;
+  /** ISO timestamp after which this comment can no longer be edited or removed. */
+  editable_until: string;
 };
+
+/** How long after posting a comment stays editable. Mirrors comment_edit_window(). */
+export const COMMENT_EDIT_WINDOW_MS = 10 * 60 * 1000;
 
 /** Everything the cat card needs, assembled server-side. */
 export type CatBundle = {
