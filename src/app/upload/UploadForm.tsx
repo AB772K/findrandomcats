@@ -22,10 +22,10 @@ export default function UploadForm() {
   return (
     <form
       onSubmit={onSubmit}
-      className="space-y-4 rounded-2xl border border-ink/10 bg-white p-5 shadow-sm"
+      className="card space-y-4 p-6"
     >
       <label className="block space-y-1">
-        <span className="text-xs font-medium text-ink/60">Photo (max 5 MB)</span>
+        <span className="text-xs font-medium text-ink/55">Photo (max 5 MB)</span>
         <input
           name="image"
           type="file"
@@ -35,7 +35,7 @@ export default function UploadForm() {
             const file = event.target.files?.[0];
             setPreview(file ? URL.createObjectURL(file) : null);
           }}
-          className="w-full rounded-lg border border-ink/15 px-3 py-2 text-sm file:mr-3 file:rounded file:border-0 file:bg-ink/10 file:px-2 file:py-1 file:text-xs"
+          className="field file:mr-3 file:rounded-full file:border-0 file:bg-lilac-100 file:px-3 file:py-1 file:text-xs file:text-ink/70"
         />
       </label>
 
@@ -44,29 +44,29 @@ export default function UploadForm() {
         <img
           src={preview}
           alt="Selected cat"
-          className="aspect-[4/3] w-full rounded-xl object-cover"
+          className="aspect-[4/3] w-full rounded-2xl object-cover shadow-soft"
         />
       ) : null}
 
       <label className="block space-y-1">
-        <span className="text-xs font-medium text-ink/60">Caption (optional)</span>
+        <span className="text-xs font-medium text-ink/55">Caption (optional)</span>
         <input
           name="caption"
           type="text"
           maxLength={140}
-          className="w-full rounded-lg border border-ink/15 px-3 py-2 text-sm outline-none focus:border-ink/40"
+          className="field"
         />
       </label>
 
       <button
         type="submit"
         disabled={busy}
-        className="w-full rounded-lg bg-ink px-4 py-2.5 text-sm font-semibold text-cream transition hover:bg-ink/85 disabled:opacity-50"
+        className="btn-primary w-full"
       >
         {busy ? 'Uploading…' : 'Add to the cat pool'}
       </button>
 
-      {error ? <p className="text-xs text-red-600">{error}</p> : null}
+      {error ? <p className="rounded-2xl bg-rose-50/80 px-3 py-2 text-xs text-rose-700">{error}</p> : null}
     </form>
   );
 }

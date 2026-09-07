@@ -13,7 +13,9 @@ Find a random cat, rate it 1–10, and argue about it in the comments. Next.js 1
 
 2. **Create a Supabase project**, then run [`supabase/schema.sql`](supabase/schema.sql)
    in the dashboard SQL editor. It creates the tables, the RLS policies, the
-   `cat-photos` storage bucket, and the signup trigger that grants 3 NOTES.
+   `cat-photos` and `avatars` storage buckets, and the signup trigger that
+   grants 3 NOTES. The script is idempotent — re-run it after pulling to pick up
+   new columns and functions.
 
 3. **Add credentials**
 
@@ -47,17 +49,31 @@ Find a random cat, rate it 1–10, and argue about it in the comments. Next.js 1
 | Random cat + aggregates | `random_cat()` / `cat_rating_summary()` in `supabase/schema.sql`, called from [`src/lib/actions.ts`](src/lib/actions.ts) |
 | Rating (1–10, one per user per cat) | `ratings` unique constraint + upsert in `rateCat()` |
 | Comments cost 1 NOTE | `post_comment()` SQL function — balance check, debit, and insert in one transaction |
+| Profanity check on comments | [`src/lib/profanity.ts`](src/lib/profanity.ts) (`bad-words`), called from `postComment()` — rejects, never censors |
+| Comment avatars + names | `cat_comments()` SQL function joins each author's public profile fields; rendered by [`Avatar`](src/components/Avatar.tsx) |
+| Public profiles | [`src/app/u/[id]/`](src/app/u/) via `public_profile()` / `profile_rating_summary()` |
+| Profile editing | [`src/app/settings/`](src/app/settings/) → `avatars` bucket + `update_my_profile()` |
 | Ad slot every 2 cats | `CATS_PER_AD` in [`src/components/CatFeed.tsx`](src/components/CatFeed.tsx), rendering [`AdSlot`](src/components/AdSlot.tsx) |
+| Rewarded video placeholder | `CATS_PER_VIDEO_AD` in `CatFeed`, rendering [`VideoAdSlot`](src/components/VideoAdSlot.tsx) (inert, "Coming soon") |
 | Adblock nudge | [`src/components/AdblockNotice.tsx`](src/components/AdblockNotice.tsx) |
 | Attribution per source | [`src/components/CatImage.tsx`](src/components/CatImage.tsx) |
 | User uploads | [`src/app/upload/`](src/app/upload/) → `cat-photos` bucket |
 
-### Privacy of ratings
+### Privacy of ratings and profiles
 
 `ratings` has no public SELECT policy — a signed-in user can read only their own
 row. Everyone else's stars are reachable only through the `security definer`
 `cat_rating_summary()` function, which returns counts and percentages, never
 user ids.
+
+Public profiles follow the same rule. `/u/[id]` reads nothing directly: both
+`public_profile()` and `profile_rating_summary()` are `security definer`
+aggregates that hand back a fixed set of columns. Deliberately *not* returned:
+`notes_balance`, `user_id`, the account email, and any per-cat rating rows — so
+the star breakdown can never be mapped back to a specific cat.
+
+`notes_spent` is a counter incremented inside `post_comment()`, which is why the
+page can show lifetime spend without exposing the current wallet.
 
 ### Wiring up AdSense later
 
@@ -65,6 +81,12 @@ user ids.
 into `src/app/layout.tsx` and replace the placeholder markup with your
 `<ins className="adsbygoogle">` unit. `AdblockNotice` already probes for a
 blocked `.adsbygoogle` element, so it keeps working unchanged.
+
+`VideoAdSlot` is the rewarded-video equivalent and is entirely inert — no SDK
+call, no NOTE grant. To go live, swap its disabled button for one that opens the
+provider's ad and, on the completion callback, calls a new server action that
+credits `notes_balance`. Grant the NOTE server-side from the provider's
+verification webhook, not from the browser callback, or it is trivially farmed.
 
 ## Deploying
 

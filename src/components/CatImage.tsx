@@ -15,7 +15,7 @@ function Credit({ cat }: { cat: Cat }) {
   const author = cat.author_name?.trim();
 
   return (
-    <p className="mt-2 text-xs text-ink/50">
+    <p className="mt-2 text-xs text-ink/45">
       {author ? `${author} via ` : 'via '}
       {cat.source_url ? (
         <a
@@ -37,7 +37,7 @@ function Credit({ cat }: { cat: Cat }) {
 export default function CatImage({ cat, priority = false }: { cat: Cat; priority?: boolean }) {
   return (
     <figure>
-      <div className="relative aspect-[4/3] w-full overflow-hidden rounded-xl bg-ink/5">
+      <div className="relative aspect-[4/3] w-full overflow-hidden rounded-2xl bg-lilac-50 shadow-soft">
         <Image
           src={cat.image_url}
           alt={cat.caption ?? 'A random cat'}
@@ -49,7 +49,7 @@ export default function CatImage({ cat, priority = false }: { cat: Cat; priority
         />
       </div>
       <figcaption>
-        {cat.caption ? <p className="mt-3 text-sm text-ink/80">{cat.caption}</p> : null}
+        {cat.caption ? <p className="mt-3 text-sm text-ink/75">{cat.caption}</p> : null}
         <Credit cat={cat} />
       </figcaption>
     </figure>

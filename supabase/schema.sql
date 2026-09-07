@@ -14,6 +14,30 @@ create table if not exists public.profiles (
   created_at    timestamptz not null default now()
 );
 
+-- Public-facing profile fields. Nullable: a profile is perfectly usable blank,
+-- and the UI falls back to an initials avatar / "Cat lover".
+alter table public.profiles add column if not exists display_name        text;
+alter table public.profiles add column if not exists profile_picture_url text;
+alter table public.profiles add column if not exists bio                 text;
+
+-- Lifetime NOTES spent, tracked separately from the balance so the public
+-- profile can show spend without ever revealing what is left in the wallet.
+alter table public.profiles add column if not exists notes_spent integer not null default 0;
+
+do $do$ begin
+  alter table public.profiles add constraint profiles_display_name_len
+    check (display_name is null or length(btrim(display_name)) between 1 and 40);
+exception when duplicate_object then null; end $do$;
+
+do $do$ begin
+  alter table public.profiles add constraint profiles_bio_len
+    check (bio is null or length(bio) <= 300);
+exception when duplicate_object then null; end $do$;
+
+do $do$ begin
+  alter table public.profiles add constraint profiles_notes_spent_nonneg check (notes_spent >= 0);
+exception when duplicate_object then null; end $do$;
+
 -- ----------------------------------------------------------------- cats
 create table if not exists public.cats (
   id          uuid primary key default gen_random_uuid(),
@@ -47,7 +71,16 @@ create table if not exists public.comments (
 );
 
 create index if not exists comments_cat_id_created_at_idx on public.comments (cat_id, created_at desc);
+create index if not exists comments_user_id_idx on public.comments (user_id);
 create index if not exists ratings_cat_id_idx on public.ratings (cat_id);
+create index if not exists ratings_user_id_idx on public.ratings (user_id);
+
+-- Backfill for databases created before notes_spent existed: every comment on
+-- record cost exactly 1 NOTE. Runs after comments so a fresh install is a no-op.
+update public.profiles p
+set notes_spent = c.n
+from (select user_id, count(*)::int as n from public.comments group by user_id) c
+where c.user_id = p.user_id and p.notes_spent = 0;
 
 -- --------------------------------------------- profile on signup (3 NOTES)
 create or replace function public.handle_new_user()
@@ -161,6 +194,144 @@ $fn$;
 grant execute on function public.cat_rating_summary(uuid) to anon, authenticated;
 grant execute on function public.random_cat(uuid[]) to anon, authenticated;
 
+-- ------------------------------------------- comments with their authors
+-- Comments live behind RLS and profiles are readable only by their owner, so a
+-- plain join would return nothing for other people's names. Same trick as
+-- cat_rating_summary(): a security-definer function hands back exactly the
+-- public fields (profile id, display name, avatar) and nothing else -- never
+-- the author's email, user_id, or NOTES balance.
+create or replace function public.cat_comments(p_cat_id uuid)
+returns table (
+  id                  uuid,
+  cat_id              uuid,
+  body                text,
+  created_at          timestamptz,
+  author_id           uuid,
+  display_name        text,
+  profile_picture_url text
+)
+language sql
+stable
+security definer
+set search_path = public
+as $fn$
+  select c.id,
+         c.cat_id,
+         c.body,
+         c.created_at,
+         p.id,
+         p.display_name,
+         p.profile_picture_url
+  from public.comments c
+  left join public.profiles p on p.user_id = c.user_id
+  where c.cat_id = p_cat_id
+  order by c.created_at desc
+  limit 100;
+$fn$;
+
+grant execute on function public.cat_comments(uuid) to authenticated;
+
+-- ------------------------------------------------------ public profiles
+-- The /u/[id] page reads only through these two functions. Deliberately absent:
+-- notes_balance, user_id, email, and any per-cat rating rows.
+create or replace function public.public_profile(p_profile_id uuid)
+returns table (
+  id                  uuid,
+  display_name        text,
+  profile_picture_url text,
+  bio                 text,
+  created_at          timestamptz,
+  comment_count       bigint,
+  notes_spent         integer,
+  rating_count        bigint
+)
+language sql
+stable
+security definer
+set search_path = public
+as $fn$
+  select p.id,
+         p.display_name,
+         p.profile_picture_url,
+         p.bio,
+         p.created_at,
+         (select count(*) from public.comments c where c.user_id = p.user_id),
+         p.notes_spent,
+         (select count(*) from public.ratings r where r.user_id = p.user_id)
+  from public.profiles p
+  where p.id = p_profile_id;
+$fn$;
+
+-- Aggregate-only view of the stars this person has GIVEN. Returns tallies, so
+-- there is no way to map a star value back to a specific cat.
+create or replace function public.profile_rating_summary(p_profile_id uuid)
+returns table (stars integer, count bigint, percent numeric)
+language sql
+stable
+security definer
+set search_path = public
+as $fn$
+  with mine as (
+    select r.stars
+    from public.ratings r
+    join public.profiles p on p.user_id = r.user_id
+    where p.id = p_profile_id
+  ), tallies as (
+    select m.stars, count(*)::bigint as count from mine m group by m.stars
+  ), total as (
+    select coalesce(sum(count), 0)::bigint as n from tallies
+  )
+  select t.stars,
+         t.count,
+         round((t.count * 100.0) / nullif((select n from total), 0), 1) as percent
+  from tallies t
+  order by t.stars;
+$fn$;
+
+grant execute on function public.public_profile(uuid) to anon, authenticated;
+grant execute on function public.profile_rating_summary(uuid) to anon, authenticated;
+
+-- --------------------------------------------- update your own profile
+-- Display name / bio / avatar go through a function so the same trimming and
+-- length rules apply no matter what the client sends. notes_balance and
+-- notes_spent are untouchable here.
+create or replace function public.update_my_profile(
+  p_display_name        text,
+  p_bio                 text,
+  p_profile_picture_url text
+)
+returns public.profiles
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+declare
+  v_profile public.profiles;
+begin
+  if auth.uid() is null then
+    raise exception 'You must be signed in.' using errcode = '42501';
+  end if;
+
+  update public.profiles
+  set display_name        = nullif(btrim(coalesce(p_display_name, '')), ''),
+      bio                 = nullif(btrim(coalesce(p_bio, '')), ''),
+      profile_picture_url = coalesce(
+                              nullif(btrim(coalesce(p_profile_picture_url, '')), ''),
+                              profile_picture_url
+                            )
+  where user_id = auth.uid()
+  returning * into v_profile;
+
+  if not found then
+    raise exception 'No profile found for this account.' using errcode = 'P0002';
+  end if;
+
+  return v_profile;
+end;
+$fn$;
+
+grant execute on function public.update_my_profile(text, text, text) to authenticated;
+
 -- ------------------------------------- post a comment, charging 1 NOTE
 create or replace function public.post_comment(p_cat_id uuid, p_body text)
 returns public.comments
@@ -195,7 +366,8 @@ begin
   end if;
 
   update public.profiles
-  set notes_balance = notes_balance - 1
+  set notes_balance = notes_balance - 1,
+      notes_spent   = notes_spent + 1
   where id = v_profile.id;
 
   insert into public.comments (cat_id, user_id, body)
@@ -220,3 +392,23 @@ create policy "cat photos: public read" on storage.objects
 drop policy if exists "cat photos: authenticated upload" on storage.objects;
 create policy "cat photos: authenticated upload" on storage.objects
   for insert to authenticated with check (bucket_id = 'cat-photos');
+
+-- Avatars get their own bucket. Files are namespaced by user id and a user may
+-- only write inside their own folder, so nobody can overwrite someone's face.
+insert into storage.buckets (id, name, public)
+values ('avatars', 'avatars', true)
+on conflict (id) do nothing;
+
+drop policy if exists "avatars: public read" on storage.objects;
+create policy "avatars: public read" on storage.objects
+  for select using (bucket_id = 'avatars');
+
+drop policy if exists "avatars: owner upload" on storage.objects;
+create policy "avatars: owner upload" on storage.objects
+  for insert to authenticated
+  with check (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
+
+drop policy if exists "avatars: owner update" on storage.objects;
+create policy "avatars: owner update" on storage.objects
+  for update to authenticated
+  using (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);

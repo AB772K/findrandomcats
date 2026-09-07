@@ -16,7 +16,30 @@ export type Profile = {
   id: string;
   user_id: string;
   notes_balance: number;
+  notes_spent: number;
+  display_name: string | null;
+  profile_picture_url: string | null;
+  bio: string | null;
   created_at: string;
+};
+
+/** The subset of a profile anyone may see, straight from public_profile(). */
+export type PublicProfile = {
+  id: string;
+  display_name: string | null;
+  profile_picture_url: string | null;
+  bio: string | null;
+  created_at: string;
+  comment_count: number;
+  notes_spent: number;
+  rating_count: number;
+};
+
+/** What the signed-in user may edit about themselves. */
+export type MyProfile = {
+  display_name: string | null;
+  profile_picture_url: string | null;
+  bio: string | null;
 };
 
 /** One row per star value that actually received at least one rating. */
@@ -26,12 +49,18 @@ export type RatingTally = {
   percent: number;
 };
 
+/**
+ * A comment as returned by cat_comments(): the author's public fields are
+ * joined in server-side. `author_id` is a profiles.id, safe to put in a URL.
+ */
 export type CommentRow = {
   id: string;
   cat_id: string;
-  user_id: string;
   body: string;
   created_at: string;
+  author_id: string | null;
+  display_name: string | null;
+  profile_picture_url: string | null;
 };
 
 /** Everything the cat card needs, assembled server-side. */

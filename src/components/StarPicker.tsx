@@ -37,16 +37,16 @@ export default function StarPicker({
             onMouseEnter={() => setHovered(star)}
             onFocus={() => setHovered(star)}
             onClick={() => startTransition(() => onRate(star))}
-            className={`h-9 w-9 rounded-md text-lg leading-none transition disabled:cursor-not-allowed disabled:opacity-40 ${
-              star <= active ? 'text-amber-500' : 'text-ink/25'
-            } hover:bg-ink/5`}
+            className={`h-9 w-9 rounded-full text-lg leading-none transition duration-200 hover:-translate-y-0.5 hover:bg-white/70 disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-40 ${
+              star <= active ? 'text-blush-400' : 'text-ink/20'
+            }`}
           >
             ★
           </button>
         ))}
       </div>
 
-      <p className="mt-2 text-xs text-ink/50">
+      <p className="mt-2 text-xs text-ink/45">
         {disabled
           ? 'Sign in to rate this cat.'
           : myStars

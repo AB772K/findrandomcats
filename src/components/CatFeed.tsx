@@ -6,10 +6,13 @@ import CatImage from '@/components/CatImage';
 import CommentBox from '@/components/CommentBox';
 import RatingBreakdown from '@/components/RatingBreakdown';
 import StarPicker from '@/components/StarPicker';
+import VideoAdSlot from '@/components/VideoAdSlot';
 import { fetchRandomCat, postComment, rateCat } from '@/lib/actions';
 import type { CatBundle } from '@/lib/types';
 
 const CATS_PER_AD = 2;
+/** The rewarded-video placeholder is rarer than the banner so it stays a treat. */
+const CATS_PER_VIDEO_AD = 6;
 
 export default function CatFeed({
   signedIn,
@@ -25,7 +28,9 @@ export default function CatFeed({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const showAd = viewed > 0 && viewed % CATS_PER_AD === 0;
+  const showVideoAd = viewed > 0 && viewed % CATS_PER_VIDEO_AD === 0;
+  // Never stack both placeholders on the same cat.
+  const showAd = viewed > 0 && viewed % CATS_PER_AD === 0 && !showVideoAd;
 
   const findCat = useCallback(async () => {
     setLoading(true);
@@ -79,31 +84,32 @@ export default function CatFeed({
           type="button"
           onClick={findCat}
           disabled={loading}
-          className="rounded-full bg-ink px-6 py-3 text-base font-semibold text-cream shadow-sm transition hover:bg-ink/85 disabled:cursor-not-allowed disabled:opacity-50"
+          className="btn-primary px-8 py-3.5 text-base"
         >
           {loading ? 'Finding…' : bundle ? 'Find another random cat' : 'Find a Random Cat'}
         </button>
-        <p className="text-xs text-ink/50">
+        <p className="text-xs text-ink/45">
           {viewed} {viewed === 1 ? 'cat' : 'cats'} viewed this session
         </p>
       </div>
 
       {error ? (
-        <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+        <p className="card bg-rose-50/80 px-4 py-3 text-sm text-rose-700">{error}</p>
       ) : null}
 
       {showAd ? <AdSlot index={viewed / CATS_PER_AD} /> : null}
+      {showVideoAd ? <VideoAdSlot /> : null}
 
       {bundle ? (
-        <article className="space-y-6 rounded-2xl border border-ink/10 bg-white p-4 shadow-sm sm:p-6">
+        <article key={bundle.cat.id} className="card animate-fade-up space-y-6 p-4 sm:p-6">
           <CatImage cat={bundle.cat} priority />
 
-          <div className="space-y-4 border-t border-ink/10 pt-5">
+          <div className="space-y-4 border-t border-lilac-100 pt-5">
             <StarPicker myStars={bundle.myStars} disabled={!signedIn} onRate={handleRate} />
             <RatingBreakdown tallies={bundle.tallies} totalRatings={bundle.totalRatings} />
           </div>
 
-          <div className="border-t border-ink/10 pt-5">
+          <div className="border-t border-lilac-100 pt-5">
             <CommentBox
               comments={bundle.comments}
               notesBalance={notes}
@@ -113,9 +119,7 @@ export default function CatFeed({
           </div>
         </article>
       ) : (
-        <p className="text-center text-sm text-ink/50">
-          Hit the button and meet a cat.
-        </p>
+        <p className="text-center text-sm text-ink/45">Hit the button and meet a cat.</p>
       )}
     </div>
   );

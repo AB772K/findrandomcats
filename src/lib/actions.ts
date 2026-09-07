@@ -3,7 +3,8 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import type { Cat, CatBundle, CommentRow, RatingTally } from '@/lib/types';
+import { PROFANITY_MESSAGE, isProfane } from '@/lib/profanity';
+import type { Cat, CatBundle, CommentRow, MyProfile, RatingTally } from '@/lib/types';
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -23,13 +24,10 @@ async function loadBundle(cat: Cat): Promise<CatBundle> {
           .eq('user_id', user.id)
           .maybeSingle()
       : Promise.resolve({ data: null, error: null }),
+    // cat_comments() joins each author's public profile fields; a plain select
+    // could not, because profiles are only readable by their owner.
     user
-      ? supabase
-          .from('comments')
-          .select('*')
-          .eq('cat_id', cat.id)
-          .order('created_at', { ascending: false })
-          .limit(100)
+      ? supabase.rpc('cat_comments', { p_cat_id: cat.id })
       : Promise.resolve({ data: [], error: null }),
   ]);
 
@@ -109,6 +107,10 @@ export async function postComment(catId: string, body: string): Promise<PostComm
   if (!trimmed) return { ok: false, error: 'Write something first.' };
   if (trimmed.length > 2000) return { ok: false, error: 'Comments are capped at 2000 characters.' };
 
+  // Rejected outright rather than censored -- a silently starred-out comment
+  // reads as if we put words in someone's mouth, and it still costs a NOTE.
+  if (isProfane(trimmed)) return { ok: false, error: PROFANITY_MESSAGE };
+
   const supabase = createClient();
   const {
     data: { user },
@@ -126,12 +128,7 @@ export async function postComment(catId: string, body: string): Promise<PostComm
   }
 
   const [comments, profile] = await Promise.all([
-    supabase
-      .from('comments')
-      .select('*')
-      .eq('cat_id', catId)
-      .order('created_at', { ascending: false })
-      .limit(100),
+    supabase.rpc('cat_comments', { p_cat_id: catId }),
     supabase.from('profiles').select('notes_balance').eq('user_id', user.id).single(),
   ]);
 
@@ -205,6 +202,82 @@ export async function uploadCat(formData: FormData): Promise<{ error: string } |
 
   revalidatePath('/');
   redirect('/upload?uploaded=1');
+}
+
+/* ----------------------------------------------------------------- profile */
+
+export type SaveProfileResult = { ok: true } | { ok: false; error: string };
+
+/** The signed-in user's own editable fields, for the settings form. */
+export async function getMyProfile(): Promise<MyProfile | null> {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return null;
+
+  const { data } = await supabase
+    .from('profiles')
+    .select('display_name, profile_picture_url, bio')
+    .eq('user_id', user.id)
+    .maybeSingle();
+
+  return (data as MyProfile | null) ?? { display_name: null, profile_picture_url: null, bio: null };
+}
+
+/**
+ * Saves display name, bio and (optionally) a new avatar. The picture goes to
+ * the `avatars` bucket under the user's own folder, mirroring uploadCat().
+ */
+export async function saveProfile(formData: FormData): Promise<SaveProfileResult> {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Sign in to edit your profile.' };
+
+  const displayName = String(formData.get('display_name') ?? '').trim();
+  const bio = String(formData.get('bio') ?? '').trim();
+
+  if (displayName.length > 40) return { ok: false, error: 'Display names are capped at 40 characters.' };
+  if (bio.length > 300) return { ok: false, error: 'Bios are capped at 300 characters.' };
+  if (displayName && isProfane(displayName)) {
+    return { ok: false, error: 'Please pick a display name without that language.' };
+  }
+  if (bio && isProfane(bio)) {
+    return { ok: false, error: 'Please reword your bio without that language.' };
+  }
+
+  let pictureUrl: string | null = null;
+  const file = formData.get('avatar');
+
+  if (file instanceof File && file.size > 0) {
+    if (!file.type.startsWith('image/')) return { ok: false, error: 'That file is not an image.' };
+    if (file.size > 2 * 1024 * 1024) return { ok: false, error: 'Profile pictures must be under 2 MB.' };
+
+    const extension = (file.name.split('.').pop() ?? 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '');
+    // The leading user id folder is what the storage RLS policy checks.
+    const path = `${user.id}/${Date.now()}.${extension || 'jpg'}`;
+
+    const { error: storageError } = await supabase.storage
+      .from('avatars')
+      .upload(path, file, { contentType: file.type, upsert: false });
+    if (storageError) return { ok: false, error: storageError.message };
+
+    pictureUrl = supabase.storage.from('avatars').getPublicUrl(path).data.publicUrl;
+  }
+
+  const { error } = await supabase.rpc('update_my_profile', {
+    p_display_name: displayName,
+    p_bio: bio,
+    // null leaves the existing picture in place.
+    p_profile_picture_url: pictureUrl,
+  });
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath('/settings');
+  revalidatePath('/', 'layout');
+  return { ok: true };
 }
 
 /* -------------------------------------------------------------------- auth */
