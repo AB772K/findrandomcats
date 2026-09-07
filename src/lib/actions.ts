@@ -3,8 +3,17 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
+import { findNotePackage } from '@/lib/notes';
 import { PROFANITY_MESSAGE, isProfane } from '@/lib/profanity';
-import type { Cat, CatBundle, CommentRow, MyProfile, RatingTally } from '@/lib/types';
+import type {
+  Cat,
+  CatBundle,
+  CommentRow,
+  MyProfile,
+  NoteKind,
+  NotesWallet,
+  RatingTally,
+} from '@/lib/types';
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -95,14 +104,20 @@ export async function rateCat(catId: string, stars: number): Promise<CatBundle> 
 /* ---------------------------------------------------------------- comments */
 
 export type PostCommentResult =
-  | { ok: true; comments: CommentRow[]; notesBalance: number }
+  | { ok: true; comments: CommentRow[]; wallet: NotesWallet }
   | { ok: false; error: string };
 
 /**
- * Comments cost 1 NOTE. The charge and the insert happen inside the
- * post_comment() Postgres function so they cannot get out of sync.
+ * Comments cost 1 NOTE from one of the two wallets. Picking the wallet,
+ * charging it, and inserting the row all happen inside post_comment() so they
+ * cannot get out of sync -- and so the client cannot claim a premium note it
+ * did not pay for.
  */
-export async function postComment(catId: string, body: string): Promise<PostCommentResult> {
+export async function postComment(
+  catId: string,
+  body: string,
+  noteKind: NoteKind = 'daily',
+): Promise<PostCommentResult> {
   const trimmed = body.trim();
   if (!trimmed) return { ok: false, error: 'Write something first.' };
   if (trimmed.length > 2000) return { ok: false, error: 'Comments are capped at 2000 characters.' };
@@ -117,44 +132,59 @@ export async function postComment(catId: string, body: string): Promise<PostComm
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: 'Sign in to comment.' };
 
-  const { error } = await supabase.rpc('post_comment', { p_cat_id: catId, p_body: trimmed });
+  const { error } = await supabase.rpc('post_comment', {
+    p_cat_id: catId,
+    p_body: trimmed,
+    p_use_premium: noteKind === 'premium',
+  });
   if (error) {
     return {
       ok: false,
-      error: /out of NOTES/i.test(error.message)
-        ? 'You are out of NOTES, so you cannot comment right now.'
-        : error.message,
+      error: /out of daily NOTES/i.test(error.message)
+        ? 'You are out of daily NOTES — switch to a premium note to post this.'
+        : /out of NOTES/i.test(error.message)
+          ? 'You are out of NOTES, so you cannot comment right now.'
+          : error.message,
     };
   }
 
-  const [comments, profile] = await Promise.all([
+  const [comments, wallet] = await Promise.all([
     supabase.rpc('cat_comments', { p_cat_id: catId }),
-    supabase.from('profiles').select('notes_balance').eq('user_id', user.id).single(),
+    getNotesWallet(),
   ]);
 
   return {
     ok: true,
     comments: (comments.data ?? []) as CommentRow[],
-    notesBalance: profile.data?.notes_balance ?? 0,
+    wallet: wallet ?? EMPTY_WALLET,
   };
 }
 
 /* ------------------------------------------------------------------- notes */
 
-export async function getNotesBalance(): Promise<number | null> {
+const EMPTY_WALLET: NotesWallet = {
+  daily_notes_balance: 0,
+  premium_notes_balance: 0,
+  daily_notes_spent: 0,
+  premium_notes_spent: 0,
+  next_reset_at: new Date(0).toISOString(),
+};
+
+/**
+ * The signed-in user's own wallet. my_notes() applies any owed 24h top-up as a
+ * side effect, so simply viewing a page is enough to refill the daily notes.
+ */
+export async function getNotesWallet(): Promise<NotesWallet | null> {
   const supabase = createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return null;
 
-  const { data } = await supabase
-    .from('profiles')
-    .select('notes_balance')
-    .eq('user_id', user.id)
-    .maybeSingle();
+  const { data, error } = await supabase.rpc('my_notes');
+  if (error) return null;
 
-  return data?.notes_balance ?? 0;
+  return (data as NotesWallet[] | null)?.[0] ?? null;
 }
 
 /* ------------------------------------------------------------------ upload */
@@ -278,6 +308,34 @@ export async function saveProfile(formData: FormData): Promise<SaveProfileResult
   revalidatePath('/settings');
   revalidatePath('/', 'layout');
   return { ok: true };
+}
+
+/* --------------------------------------------------------------- purchases */
+
+/**
+ * Placeholder checkout. There is no payment processor yet, so this never
+ * charges anything and never credits a note.
+ *
+ * When Stripe goes in, this action should create a Checkout Session server-side
+ * (never trusting a price from the client -- look it up from NOTE_PACKAGES by
+ * id, as below) and redirect to session.url. The premium notes themselves must
+ * be credited by the checkout.session.completed webhook running with the
+ * service-role key, not here and not on the browser's return trip: only the
+ * webhook can prove money actually moved.
+ */
+export async function startCheckout(packageId: string): Promise<{ error: string }> {
+  const pkg = findNotePackage(packageId);
+  if (!pkg) return { error: 'That package does not exist.' };
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { error: 'Sign in to buy premium NOTES.' };
+
+  return {
+    error: `Payments aren't live yet — the ${pkg.notes}-note pack is not purchasable for now.`,
+  };
 }
 
 /* -------------------------------------------------------------------- auth */

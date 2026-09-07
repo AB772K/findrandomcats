@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import Avatar from '@/components/Avatar';
 import { signOut } from '@/lib/actions';
+import type { NotesWallet } from '@/lib/types';
 
 export type NavProfile = {
   id: string;
@@ -10,34 +11,41 @@ export type NavProfile = {
 
 export default function Nav({
   email,
-  notesBalance,
+  wallet,
   profile,
 }: {
   email: string | null;
-  notesBalance: number | null;
+  wallet: NotesWallet | null;
   profile: NavProfile | null;
 }) {
   return (
-    <header className="sticky top-0 z-20 border-b border-white/50 bg-white/60 backdrop-blur-md">
+    <header className="sticky top-0 z-20 border-b border-blush-100 bg-paper/90 backdrop-blur-sm">
       <nav className="mx-auto flex max-w-3xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
         <Link
           href="/"
-          className="font-display text-lg font-bold tracking-tight transition duration-300 hover:opacity-70"
+          className="font-display text-lg font-bold tracking-tight transition duration-200 hover:opacity-70"
         >
-          <span className="bg-gradient-to-r from-blush-400 to-lilac-400 bg-clip-text text-transparent">
-            FindRandomCats
-          </span>
+          <span className="text-blush-500">FindRandomCats</span>
         </Link>
 
         <div className="ml-auto flex items-center gap-2 text-sm sm:gap-3">
           {email ? (
             <>
-              <span
-                title="NOTES are spent on comments"
-                className="rounded-full bg-gradient-to-r from-blush-100 to-lilac-100 px-3 py-1 text-xs font-semibold text-ink/75 shadow-soft"
+              <Link
+                href="/notes"
+                title="Daily notes refill every 24h; premium notes never expire"
+                className="chip transition duration-200 hover:border-lilac-200"
               >
-                {notesBalance ?? 0} NOTES
-              </span>
+                {wallet?.daily_notes_balance ?? 0}
+                <span className="font-normal text-ink/45"> daily</span>
+                {(wallet?.premium_notes_balance ?? 0) > 0 ? (
+                  <>
+                    {' · '}
+                    <span className="text-lilac-400">{wallet?.premium_notes_balance}</span>
+                    <span className="font-normal text-ink/45"> premium</span>
+                  </>
+                ) : null}
+              </Link>
 
               <Link href="/upload" className="text-ink/65 transition hover:text-ink">
                 Upload
@@ -50,7 +58,7 @@ export default function Nav({
                 <Link
                   href={`/u/${profile.id}`}
                   title="Your public profile"
-                  className="transition duration-300 hover:-translate-y-0.5"
+                  className="transition duration-200 hover:opacity-80"
                 >
                   <Avatar
                     name={profile.displayName ?? email}

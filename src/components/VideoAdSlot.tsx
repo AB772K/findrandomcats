@@ -12,9 +12,9 @@ export default function VideoAdSlot({ reward = 1 }: { reward?: number }) {
     <div
       id="video-ad-slot"
       data-reward-notes={reward}
-      className="card flex flex-col items-center gap-3 border-dashed border-lilac-200 bg-white/50 p-5 text-center"
+      className="flex flex-col items-center gap-3 rounded-3xl border border-dashed border-lilac-200 bg-lilac-50/60 p-5 text-center"
     >
-      <span className="flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-blush-100 to-lilac-100 text-lg">
+      <span className="flex h-12 w-12 items-center justify-center rounded-full bg-blush-100 text-lg text-ink/60">
         ▶
       </span>
 
@@ -37,7 +37,7 @@ export default function VideoAdSlot({ reward = 1 }: { reward?: number }) {
         Watch video
       </button>
 
-      <span className="rounded-full bg-lilac-100 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-ink/50">
+      <span className="rounded-full border border-lilac-200 bg-lilac-50 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-widest text-ink/50">
         Coming soon
       </span>
     </div>

@@ -37,8 +37,8 @@ export default function StarPicker({
             onMouseEnter={() => setHovered(star)}
             onFocus={() => setHovered(star)}
             onClick={() => startTransition(() => onRate(star))}
-            className={`h-9 w-9 rounded-full text-lg leading-none transition duration-200 hover:-translate-y-0.5 hover:bg-white/70 disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-40 ${
-              star <= active ? 'text-blush-400' : 'text-ink/20'
+            className={`h-9 w-9 rounded-full text-lg leading-none transition duration-200 hover:bg-blush-50 disabled:cursor-not-allowed disabled:opacity-40 ${
+              star <= active ? 'text-blush-400' : 'text-ink/15'
             }`}
           >
             ★

@@ -17,9 +17,7 @@ export default async function LoginPage() {
     <div className="mx-auto max-w-sm animate-fade-up space-y-6">
       <div className="space-y-1 text-center">
         <h1 className="font-display text-3xl font-bold tracking-tight">
-          <span className="bg-gradient-to-r from-blush-400 to-lilac-400 bg-clip-text text-transparent">
-            Welcome in
-          </span>
+          <span className="text-blush-500">Welcome in</span>
         </h1>
         <p className="text-sm text-ink/55">New accounts start with 3 NOTES.</p>
       </div>

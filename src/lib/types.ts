@@ -15,12 +15,31 @@ export type Cat = {
 export type Profile = {
   id: string;
   user_id: string;
-  notes_balance: number;
-  notes_spent: number;
+  daily_notes_balance: number;
+  daily_notes_spent: number;
+  premium_notes_balance: number;
+  premium_notes_spent: number;
+  daily_notes_reset_at: string;
   display_name: string | null;
   profile_picture_url: string | null;
   bio: string | null;
   created_at: string;
+};
+
+/** Which wallet pays for a comment. */
+export type NoteKind = 'daily' | 'premium';
+
+/** How many daily notes a full top-up restores. */
+export const DAILY_NOTES_ALLOWANCE = 3;
+
+/** The signed-in user's own wallet, from my_notes(). Never another user's. */
+export type NotesWallet = {
+  daily_notes_balance: number;
+  premium_notes_balance: number;
+  daily_notes_spent: number;
+  premium_notes_spent: number;
+  /** ISO timestamp when the daily allowance next tops up. */
+  next_reset_at: string;
 };
 
 /** The subset of a profile anyone may see, straight from public_profile(). */
@@ -31,7 +50,8 @@ export type PublicProfile = {
   bio: string | null;
   created_at: string;
   comment_count: number;
-  notes_spent: number;
+  daily_notes_spent: number;
+  premium_notes_spent: number;
   rating_count: number;
 };
 
@@ -58,6 +78,7 @@ export type CommentRow = {
   cat_id: string;
   body: string;
   created_at: string;
+  used_premium_note: boolean;
   author_id: string | null;
   display_name: string | null;
   profile_picture_url: string | null;

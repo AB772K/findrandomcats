@@ -35,7 +35,7 @@ export default function UploadForm() {
             const file = event.target.files?.[0];
             setPreview(file ? URL.createObjectURL(file) : null);
           }}
-          className="field file:mr-3 file:rounded-full file:border-0 file:bg-lilac-100 file:px-3 file:py-1 file:text-xs file:text-ink/70"
+          className="field file:mr-3 file:rounded-full file:border-0 file:bg-lilac-50 file:px-3 file:py-1 file:text-xs file:text-ink/70"
         />
       </label>
 
@@ -44,7 +44,7 @@ export default function UploadForm() {
         <img
           src={preview}
           alt="Selected cat"
-          className="aspect-[4/3] w-full rounded-2xl object-cover shadow-soft"
+          className="aspect-[4/3] w-full rounded-2xl object-cover"
         />
       ) : null}
 
@@ -66,7 +66,7 @@ export default function UploadForm() {
         {busy ? 'Uploading…' : 'Add to the cat pool'}
       </button>
 
-      {error ? <p className="rounded-2xl bg-rose-50/80 px-3 py-2 text-xs text-rose-700">{error}</p> : null}
+      {error ? <p className="rounded-2xl border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p> : null}
     </form>
   );
 }

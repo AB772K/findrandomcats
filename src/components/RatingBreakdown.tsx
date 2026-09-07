@@ -33,7 +33,7 @@ export default function RatingBreakdown({
               <span className="w-14 shrink-0 tabular-nums text-ink/55">{t.stars} ★</span>
               <span className="h-2.5 flex-1 overflow-hidden rounded-full bg-lilac-100">
                 <span
-                  className="block h-full rounded-full bg-gradient-to-r from-blush-300 to-lilac-300 transition-[width] duration-500"
+                  className="block h-full rounded-full bg-blush-300 transition-[width] duration-500"
                   style={{ width: `${percent}%` }}
                 />
               </span>

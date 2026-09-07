@@ -7,7 +7,7 @@ export default function AdSlot({ index }: { index: number }) {
     <div
       id="ad-slot"
       data-ad-index={index}
-      className="card flex h-28 items-center justify-center border-dashed border-lilac-200 bg-white/50 text-xs uppercase tracking-[0.2em] text-ink/35"
+      className="flex h-28 items-center justify-center rounded-3xl border border-dashed border-lilac-200 bg-lilac-50/60 text-xs uppercase tracking-[0.2em] text-ink/35"
     >
       Ad slot
     </div>

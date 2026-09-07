@@ -5,13 +5,25 @@
 @layer base {
   body {
     @apply min-h-screen text-ink antialiased;
-    /* Dusky pink -> lavender -> cream wash. A gradient costs nothing to load,
-       unlike a background image, and stays put while the page scrolls. */
-    background:
-      radial-gradient(60rem 40rem at 12% -10%, #fbe6ee 0%, transparent 60%),
-      radial-gradient(55rem 38rem at 92% 0%, #ece7fb 0%, transparent 55%),
-      linear-gradient(180deg, #fdf7f2 0%, #fbf4f6 55%, #f4eff9 100%);
+    /* Matte pastel wash. Kept low-contrast and flat -- the earlier version
+       stacked bright radial hotspots that read as a glossy sheen. */
+    background-color: #faf6f4;
+    background-image:
+      radial-gradient(70rem 45rem at 8% -15%, rgba(238, 170, 195, 0.14) 0%, transparent 62%),
+      radial-gradient(60rem 40rem at 95% 2%, rgba(166, 140, 228, 0.12) 0%, transparent 58%);
     background-attachment: fixed;
+  }
+
+  /* A faint paper grain breaks up the flat fills without costing a request:
+     one tiny inline SVG of fractal noise, tiled by the browser. */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    opacity: 0.4;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.32'/%3E%3C/svg%3E");
   }
 
   h1,
@@ -22,35 +34,41 @@
 }
 
 @layer components {
-  /* Frosted card: the one surface treatment used across every page. */
+  /* Grounded card: hairline border, opaque matte fill, shadow tight enough to
+     sit on the page rather than float above it. */
   .card {
-    @apply rounded-3xl border border-white/60 bg-white/75 shadow-soft backdrop-blur-sm;
+    @apply rounded-3xl border border-blush-100 bg-paper shadow-soft;
   }
 
   .card-hover {
-    @apply transition duration-300 hover:-translate-y-0.5 hover:shadow-lift;
+    @apply transition duration-200 hover:border-lilac-200 hover:shadow-lift;
   }
 
+  /* Flat fill, no gradient sheen. The hover shift is colour, not lift. */
   .btn-primary {
-    @apply rounded-full bg-gradient-to-r from-blush-400 to-lilac-400 px-5 py-2.5
-           font-display text-sm font-semibold text-white shadow-soft
-           transition duration-300 hover:-translate-y-0.5 hover:shadow-lift
+    @apply rounded-full bg-blush-400 px-5 py-2.5 font-display text-sm font-semibold
+           text-white shadow-soft transition duration-200
+           hover:bg-blush-500
            focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2
            focus-visible:outline-lilac-400
-           disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-soft;
+           disabled:cursor-not-allowed disabled:bg-ink/20 disabled:text-white/70 disabled:shadow-none;
   }
 
   .btn-soft {
-    @apply rounded-full border border-white/70 bg-white/70 px-4 py-2 text-sm font-medium
-           text-ink/75 transition duration-300 hover:-translate-y-0.5 hover:bg-white hover:text-ink
-           hover:shadow-soft;
+    @apply rounded-full border border-blush-100 bg-paper px-4 py-2 text-sm font-medium
+           text-ink/75 transition duration-200 hover:border-lilac-200 hover:text-ink;
+  }
+
+  /* Matte pastel chip, used for balances and labels. */
+  .chip {
+    @apply rounded-full border border-blush-100 bg-blush-50 px-3 py-1 text-xs font-semibold text-ink/70;
   }
 
   .field {
-    @apply w-full rounded-2xl border border-lilac-200/70 bg-white/80 px-4 py-2.5 text-sm
-           outline-none transition duration-200
+    @apply w-full rounded-2xl border border-lilac-200 bg-paper px-4 py-2.5 text-sm
+           outline-none transition duration-150
            placeholder:text-ink/35
-           focus:border-lilac-300 focus:bg-white focus:ring-4 focus:ring-lilac-100
+           focus:border-lilac-300 focus:ring-4 focus:ring-lilac-100
            disabled:bg-ink/[0.04] disabled:text-ink/40;
   }
 }

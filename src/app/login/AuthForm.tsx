@@ -28,7 +28,7 @@ export default function AuthForm() {
             type="button"
             onClick={() => setMode(option)}
             className={`rounded-full px-3 py-1.5 font-medium transition duration-300 ${
-              mode === option ? 'bg-white text-ink shadow-soft' : 'text-ink/55 hover:text-ink'
+              mode === option ? 'bg-paper text-ink shadow-soft' : 'text-ink/55 hover:text-ink'
             }`}
           >
             {option === 'signin' ? 'Sign in' : 'Sign up'}
@@ -63,8 +63,8 @@ export default function AuthForm() {
         <SubmitButton label={mode === 'signin' ? 'Sign in' : 'Create account'} />
       </form>
 
-      {state.error ? <p className="text-xs text-red-600">{state.error}</p> : null}
-      {state.message ? <p className="text-xs text-emerald-700">{state.message}</p> : null}
+      {state.error ? <p className="rounded-2xl border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">{state.error}</p> : null}
+      {state.message ? <p className="rounded-2xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">{state.message}</p> : null}
     </div>
   );
 }

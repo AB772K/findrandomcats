@@ -22,7 +22,7 @@ export default function Avatar({
   size?: keyof typeof SIZES;
 }) {
   const label = displayNameOf(name);
-  const shell = `${SIZES[size]} shrink-0 overflow-hidden rounded-full ring-2 ring-white/80 shadow-soft`;
+  const shell = `${SIZES[size]} shrink-0 overflow-hidden rounded-full ring-2 ring-blush-100`;
 
   if (url) {
     return (

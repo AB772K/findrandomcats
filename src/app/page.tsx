@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import CatFeed from '@/components/CatFeed';
+import { getNotesWallet } from '@/lib/actions';
 import { createClient } from '@/lib/supabase/server';
 
 export default async function HomePage() {
@@ -9,7 +10,7 @@ export default async function HomePage() {
 
   if (!configured) {
     return (
-      <div className="card border-amber-200 bg-amber-50/80 p-6 text-sm text-amber-900">
+      <div className="rounded-3xl border border-amber-200 bg-amber-50 p-6 text-sm text-amber-900">
         <h1 className="mb-2 font-display text-lg font-bold">Almost there</h1>
         <p>
           Copy <code className="font-mono">.env.local.example</code> to{' '}
@@ -26,30 +27,22 @@ export default async function HomePage() {
     data: { user },
   } = await supabase.auth.getUser();
 
-  let notes: number | null = null;
-  if (user) {
-    const { data } = await supabase
-      .from('profiles')
-      .select('notes_balance')
-      .eq('user_id', user.id)
-      .maybeSingle();
-    notes = data?.notes_balance ?? 0;
-  }
+  // getNotesWallet() also applies any owed 24h top-up, so landing on the home
+  // page is enough to refill the daily notes.
+  const wallet = user ? await getNotesWallet() : null;
 
   return (
     <div className="space-y-8">
       <section className="animate-fade-up space-y-2 text-center">
         <h1 className="font-display text-4xl font-bold tracking-tight sm:text-5xl">
-          <span className="bg-gradient-to-r from-blush-400 via-lilac-400 to-blush-300 bg-clip-text text-transparent">
-            Find a Random Cat
-          </span>
+          <span className="text-blush-500">Find a Random Cat</span>
         </h1>
         <p className="text-sm text-ink/55">
           Rate it out of 10. Comment for 1 NOTE.{' '}
           {user ? null : (
             <Link
               href="/login"
-              className="font-semibold text-lilac-400 underline decoration-lilac-200 underline-offset-2 transition hover:text-blush-400"
+              className="font-semibold text-lilac-400 underline decoration-lilac-200 underline-offset-2 transition hover:text-blush-500"
             >
               Sign up for 3 free NOTES
             </Link>
@@ -57,7 +50,7 @@ export default async function HomePage() {
         </p>
       </section>
 
-      <CatFeed signedIn={Boolean(user)} initialNotes={notes} />
+      <CatFeed signedIn={Boolean(user)} initialWallet={wallet} />
     </div>
   );
 }

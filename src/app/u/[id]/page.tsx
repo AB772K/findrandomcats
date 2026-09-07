@@ -16,9 +16,9 @@ export async function generateMetadata({ params }: { params: { id: string } }) {
 
 function Stat({ value, label }: { value: string | number; label: string }) {
   return (
-    <div className="card card-hover flex-1 p-4 text-center">
+    <div className="card card-hover p-4 text-center">
       <p className="font-display text-2xl font-bold text-ink">{value}</p>
-      <p className="mt-0.5 text-xs text-ink/50">{label}</p>
+      <p className="mt-0.5 text-xs leading-tight text-ink/50">{label}</p>
     </div>
   );
 }
@@ -33,7 +33,8 @@ export default async function PublicProfilePage({ params }: { params: { id: stri
 
   // Both of these are security-definer aggregates, exactly like
   // cat_rating_summary(). Nothing here reads profiles or ratings directly, so
-  // RLS cannot leak the balance, the email, or which cats they rated.
+  // RLS cannot leak either wallet balance, the email, or which cats they rated.
+  // Lifetime spend is public; what is left in the wallet is not.
   const [profileResult, ratingsResult] = await Promise.all([
     supabase.rpc('public_profile', { p_profile_id: params.id }),
     supabase.rpc('profile_rating_summary', { p_profile_id: params.id }),
@@ -83,9 +84,10 @@ export default async function PublicProfilePage({ params }: { params: { id: stri
         </div>
       </section>
 
-      <section className="flex flex-col gap-3 sm:flex-row">
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat value={Number(profile.comment_count)} label="comments written" />
-        <Stat value={Number(profile.notes_spent)} label="NOTES spent" />
+        <Stat value={Number(profile.daily_notes_spent)} label="notes spent" />
+        <Stat value={Number(profile.premium_notes_spent)} label="premium notes spent" />
         <Stat value={average === null ? '—' : `${average.toFixed(1)}/10`} label="average given" />
       </section>
 
@@ -109,7 +111,7 @@ export default async function PublicProfilePage({ params }: { params: { id: stri
                     <span className="w-12 shrink-0 tabular-nums text-ink/55">{tally.stars} ★</span>
                     <span className="h-2.5 flex-1 overflow-hidden rounded-full bg-lilac-100">
                       <span
-                        className="block h-full rounded-full bg-gradient-to-r from-blush-300 to-lilac-300 transition-[width] duration-500"
+                        className="block h-full rounded-full bg-blush-300 transition-[width] duration-500"
                         style={{ width: `${percent}%` }}
                       />
                     </span>

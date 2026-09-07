@@ -8,7 +8,7 @@ import RatingBreakdown from '@/components/RatingBreakdown';
 import StarPicker from '@/components/StarPicker';
 import VideoAdSlot from '@/components/VideoAdSlot';
 import { fetchRandomCat, postComment, rateCat } from '@/lib/actions';
-import type { CatBundle } from '@/lib/types';
+import type { CatBundle, NoteKind, NotesWallet } from '@/lib/types';
 
 const CATS_PER_AD = 2;
 /** The rewarded-video placeholder is rarer than the banner so it stays a treat. */
@@ -16,13 +16,13 @@ const CATS_PER_VIDEO_AD = 6;
 
 export default function CatFeed({
   signedIn,
-  initialNotes,
+  initialWallet,
 }: {
   signedIn: boolean;
-  initialNotes: number | null;
+  initialWallet: NotesWallet | null;
 }) {
   const [bundle, setBundle] = useState<CatBundle | null>(null);
-  const [notes, setNotes] = useState(initialNotes);
+  const [wallet, setWallet] = useState(initialWallet);
   const [seenIds, setSeenIds] = useState<string[]>([]);
   const [viewed, setViewed] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -65,13 +65,13 @@ export default function CatFeed({
   );
 
   const handleComment = useCallback(
-    async (body: string) => {
+    async (body: string, noteKind: NoteKind) => {
       if (!bundle) return 'No cat loaded.';
-      const result = await postComment(bundle.cat.id, body);
+      const result = await postComment(bundle.cat.id, body, noteKind);
       if (!result.ok) return result.error;
 
       setBundle({ ...bundle, comments: result.comments });
-      setNotes(result.notesBalance);
+      setWallet(result.wallet);
       return null;
     },
     [bundle],
@@ -94,7 +94,7 @@ export default function CatFeed({
       </div>
 
       {error ? (
-        <p className="card bg-rose-50/80 px-4 py-3 text-sm text-rose-700">{error}</p>
+        <p className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p>
       ) : null}
 
       {showAd ? <AdSlot index={viewed / CATS_PER_AD} /> : null}
@@ -112,7 +112,7 @@ export default function CatFeed({
           <div className="border-t border-lilac-100 pt-5">
             <CommentBox
               comments={bundle.comments}
-              notesBalance={notes}
+              wallet={wallet}
               signedIn={signedIn}
               onPost={handleComment}
             />

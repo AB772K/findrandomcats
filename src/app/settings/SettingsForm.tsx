@@ -41,7 +41,7 @@ export default function SettingsForm({ profile }: { profile: MyProfile | null })
           <img
             src={preview}
             alt="New profile picture"
-            className="h-20 w-20 shrink-0 rounded-full object-cover shadow-soft ring-2 ring-white/80"
+            className="h-20 w-20 shrink-0 rounded-full object-cover ring-2 ring-blush-100"
           />
         ) : (
           <Avatar
@@ -62,7 +62,7 @@ export default function SettingsForm({ profile }: { profile: MyProfile | null })
               const file = event.target.files?.[0];
               setPreview(file ? URL.createObjectURL(file) : null);
             }}
-            className="field file:mr-3 file:rounded-full file:border-0 file:bg-lilac-100 file:px-3 file:py-1 file:text-xs file:text-ink/70"
+            className="field file:mr-3 file:rounded-full file:border-0 file:bg-lilac-50 file:px-3 file:py-1 file:text-xs file:text-ink/70"
           />
           <span className="block text-[11px] text-ink/40">
             Leave empty to keep your current picture.
@@ -102,10 +102,10 @@ export default function SettingsForm({ profile }: { profile: MyProfile | null })
       </button>
 
       {error ? (
-        <p className="rounded-2xl bg-rose-50/80 px-3 py-2 text-xs text-rose-700">{error}</p>
+        <p className="rounded-2xl border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">{error}</p>
       ) : null}
       {saved ? (
-        <p className="rounded-2xl bg-emerald-50/80 px-3 py-2 text-xs text-emerald-800">
+        <p className="rounded-2xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
           Saved — your profile is up to date.
         </p>
       ) : null}
