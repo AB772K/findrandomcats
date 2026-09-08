@@ -80,7 +80,9 @@ export default function LeaderboardTabs({
       <section className="card p-5 sm:p-6" aria-live="polite">
         <div className="mb-4 flex items-baseline justify-between gap-3">
           <h2 className="font-display text-base font-semibold">{active.heading}</h2>
-          <span className="text-xs text-ink/45">Top {Math.max(rows.length, 0) || 10}</span>
+          <span className="text-xs text-ink/45">
+            {rows.length > 0 ? `Top ${rows.length}` : 'Top 50'}
+          </span>
         </div>
 
         {pending ? (

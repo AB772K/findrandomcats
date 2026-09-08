@@ -64,7 +64,7 @@ export default function EmojiPicker({
         aria-haspopup="dialog"
         aria-label="Insert an emoji"
         title="Insert an emoji"
-        className="rounded-full border border-blush-100 bg-paper px-2.5 py-1 text-sm transition duration-200 hover:border-lilac-200 disabled:cursor-not-allowed disabled:opacity-40"
+        className="flex h-7 w-7 items-center justify-center rounded-full border border-blush-100 bg-paper text-sm leading-none shadow-soft transition duration-200 hover:border-lilac-300 hover:bg-blush-50 disabled:cursor-not-allowed disabled:opacity-40"
       >
         <span aria-hidden>{'\u{1F642}'}</span>
       </button>
@@ -73,7 +73,7 @@ export default function EmojiPicker({
         <div
           role="dialog"
           aria-label="Emoji picker"
-          className="absolute bottom-full left-0 z-30 mb-2 w-[17rem] rounded-2xl border border-blush-100 bg-paper p-2 shadow-lift"
+          className="absolute bottom-full right-0 z-30 mb-2 w-[17rem] rounded-2xl border border-blush-100 bg-paper p-2 shadow-lift"
         >
           <div className="grid grid-cols-8 gap-0.5">
             {EMOJIS.map((emoji) => (

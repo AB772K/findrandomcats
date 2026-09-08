@@ -243,7 +243,13 @@ export default function CommentItem({
           </div>
         </div>
 
-        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 pl-1">
+        {/* The bar gets its own opaque neutral pill rather than sitting
+            directly on the page. A premium comment's glow is a wide, soft
+            box-shadow that bleeds well past the bubble, and a transparent bar
+            was disappearing into it -- this keeps the icons legible whatever
+            colour the author picked. relative + z-10 puts it above that
+            shadow instead of underneath it. */}
+        <div className="relative z-10 mt-2 inline-flex flex-wrap items-center gap-0.5 rounded-full border border-blush-200 bg-white/95 px-1.5 py-1 shadow-soft">
           {REACTIONS.map(({ kind, emoji, label }) => {
             const mine = reactions.my_reaction === kind;
             const count = countFor(kind);
@@ -268,23 +274,27 @@ export default function CommentItem({
                         : label
                       : 'Sign in to react'
                 }
-                className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition duration-200 ${
+                className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium transition duration-200 ${
                   mine
-                    ? 'border-blush-300 bg-blush-50 font-semibold text-ink'
-                    : 'border-transparent text-ink/45'
+                    ? 'border-blush-400 bg-blush-100 font-semibold text-ink'
+                    : 'border-transparent text-ink/75'
                 } ${
                   comment.is_mine
                     ? // Clearly inert: dimmed, and the cursor says so before the
                       // tooltip has a chance to.
-                      'cursor-not-allowed opacity-45'
+                      'cursor-not-allowed opacity-50'
                     : signedIn
-                      ? 'hover:border-blush-100 hover:bg-blush-50/60'
+                      ? 'hover:border-blush-200 hover:bg-blush-50'
                       : 'cursor-default opacity-60'
                 }`}
               >
-                <span aria-hidden>{emoji}</span>
+                <span aria-hidden className="text-sm leading-none">
+                  {emoji}
+                </span>
                 <span className="sr-only">{label}</span>
-                {count > 0 ? <span className="tabular-nums">{count}</span> : null}
+                {count > 0 ? (
+                  <span className="tabular-nums font-semibold text-ink/80">{count}</span>
+                ) : null}
               </button>
             );
           })}

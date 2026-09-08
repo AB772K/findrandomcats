@@ -92,13 +92,26 @@ alter table public.profiles add column if not exists premium_comment_color text;
 alter table public.profiles add column if not exists premium_comment_glow boolean not null default false;
 alter table public.profiles add column if not exists premium_comment_font text;
 
-do $do$ begin
-  -- Whitelisted rather than free text: the value becomes a CSS class name on
-  -- the client, and only these six have a font actually shipped for them.
-  alter table public.profiles add constraint profiles_premium_comment_font_known
-    check (premium_comment_font is null or premium_comment_font in
-      ('inter', 'quicksand', 'anton', 'playfair', 'jetbrains', 'caveat'));
-exception when duplicate_object then null; end $do$;
+-- Whitelisted rather than free text: the value becomes a CSS class name on the
+-- client, and only these six have a font actually shipped for them.
+--
+-- Dropped and re-added rather than guarded with a duplicate_object handler,
+-- because the list itself changes: the original six were swapped out for this
+-- set, and a constraint that already exists would otherwise keep the old names.
+alter table public.profiles drop constraint if exists profiles_premium_comment_font_known;
+
+-- Anyone still holding a retired font falls back to the default style rather
+-- than failing the new constraint. premiumFontClass() ignores unknown keys too,
+-- so this is belt and braces on top of a UI that already degrades gracefully.
+update public.profiles
+set premium_comment_font = null
+where premium_comment_font is not null
+  and premium_comment_font not in
+    ('fraunces', 'grotesk', 'bricolage', 'dancing', 'baloo', 'instrument');
+
+alter table public.profiles add constraint profiles_premium_comment_font_known
+  check (premium_comment_font is null or premium_comment_font in
+    ('fraunces', 'grotesk', 'bricolage', 'dancing', 'baloo', 'instrument'));
 
 do $do$ begin
   -- Constrained to a 6-digit hex literal so the value can be dropped straight
@@ -655,7 +668,7 @@ grant execute on function public.profile_reaction_totals(uuid) to anon, authenti
 -- name, the avatar and the single number being ranked -- no wallet balances,
 -- no user ids, no emails, and no way to ask for a column that is not on the
 -- list. Profiles scoring zero are left out rather than padding the table.
-create or replace function public.leaderboard(p_metric text, p_limit integer default 10)
+create or replace function public.leaderboard(p_metric text, p_limit integer default 50)
 returns table (
   profile_id          uuid,
   display_name        text,
@@ -668,7 +681,7 @@ security definer
 set search_path = public
 as $fn$
 declare
-  v_limit integer := least(greatest(coalesce(p_limit, 10), 1), 50);
+  v_limit integer := least(greatest(coalesce(p_limit, 50), 1), 50);
 begin
   if p_metric in ('likes', 'funny', 'loves', 'dislikes') then
     return query
@@ -768,7 +781,8 @@ begin
     raise exception 'Pick a colour in #rrggbb form.' using errcode = '22023';
   end if;
 
-  if v_font is not null and v_font not in ('inter','quicksand','anton','playfair','jetbrains','caveat') then
+  if v_font is not null and v_font not in
+     ('fraunces','grotesk','bricolage','dancing','baloo','instrument') then
     raise exception 'Unknown font.' using errcode = '22023';
   end if;
 

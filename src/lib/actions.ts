@@ -427,7 +427,7 @@ export async function deleteCat(catId: string): Promise<DeleteCatResult> {
 
 export async function fetchLeaderboard(metric: LeaderboardMetric): Promise<LeaderboardRow[]> {
   const supabase = createClient();
-  const { data, error } = await supabase.rpc('leaderboard', { p_metric: metric, p_limit: 10 });
+  const { data, error } = await supabase.rpc('leaderboard', { p_metric: metric, p_limit: 50 });
   if (error) return [];
   return (data ?? []) as LeaderboardRow[];
 }

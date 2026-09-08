@@ -66,7 +66,7 @@ export default function UploadForm() {
           name="caption"
           type="text"
           maxLength={140}
-          className="field"
+          className="field text-center"
         />
       </label>
 

@@ -102,16 +102,24 @@ export default function CommentBox({
 
       {signedIn ? (
         <form onSubmit={submit} className="space-y-3">
-          <textarea
-            ref={textarea}
-            value={body}
-            onChange={(event) => setBody(event.target.value)}
-            rows={3}
-            maxLength={2000}
-            placeholder={broke ? 'You are out of NOTES.' : 'Say something about this cat…'}
-            disabled={blocked || busy}
-            className="field resize-y"
-          />
+          {/* The picker sits inside the box, bottom-right, the way chat apps
+              do it. pb-10 keeps typed text clear of the button rather than
+              letting the last line run underneath it. */}
+          <div className="relative">
+            <textarea
+              ref={textarea}
+              value={body}
+              onChange={(event) => setBody(event.target.value)}
+              rows={3}
+              maxLength={2000}
+              placeholder={broke ? 'You are out of NOTES.' : 'Say something about this cat…'}
+              disabled={blocked || busy}
+              className="field resize-y pb-10"
+            />
+            <div className="absolute bottom-2.5 right-2.5">
+              <EmojiPicker onPick={insertEmoji} disabled={blocked || busy} />
+            </div>
+          </div>
 
           <fieldset disabled={blocked || busy} className="space-y-1.5">
             <legend className="sr-only">Which note to spend</legend>
@@ -149,7 +157,6 @@ export default function CommentBox({
           </fieldset>
 
           <div className="flex items-center justify-between gap-3">
-            <EmojiPicker onPick={insertEmoji} disabled={blocked || busy} />
             <p className="flex-1 text-xs text-ink/45">
               {broke ? (
                 <>
