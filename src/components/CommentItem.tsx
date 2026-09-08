@@ -74,8 +74,12 @@ export default function CommentItem({
           ? reactions.love_count
           : reactions.dislike_count;
 
+  // The database refuses self-reactions outright; this just keeps the UI from
+  // offering something it knows will be rejected.
+  const canReact = signedIn && !comment.is_mine;
+
   async function react(kind: ReactionKind) {
-    if (!signedIn || reacting) return;
+    if (!canReact || reacting) return;
     setReacting(true);
     setError(null);
     const result = await onReact(comment.id, kind);
@@ -243,19 +247,33 @@ export default function CommentItem({
           {REACTIONS.map(({ kind, emoji, label }) => {
             const mine = reactions.my_reaction === kind;
             const count = countFor(kind);
+
+            // On your own comment the tallies still show -- you should see what
+            // people thought -- but they render as plain counts, not buttons.
+            if (comment.is_mine) {
+              if (count === 0) return null;
+              return (
+                <span
+                  key={kind}
+                  title={`${count} ${label.toLowerCase()}`}
+                  className="flex items-center gap-1 rounded-full border border-transparent px-2 py-0.5 text-[11px] text-ink/45"
+                >
+                  <span aria-hidden>{emoji}</span>
+                  <span className="sr-only">{label}</span>
+                  <span className="tabular-nums">{count}</span>
+                </span>
+              );
+            }
+
             return (
               <button
                 key={kind}
                 type="button"
                 onClick={() => react(kind)}
-                disabled={!signedIn || reacting}
+                disabled={!canReact || reacting}
                 aria-pressed={mine}
                 title={
-                  signedIn
-                    ? mine
-                      ? `Remove your ${label.toLowerCase()}`
-                      : label
-                    : 'Sign in to react'
+                  signedIn ? (mine ? `Remove your ${label.toLowerCase()}` : label) : 'Sign in to react'
                 }
                 className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition duration-200 ${
                   mine

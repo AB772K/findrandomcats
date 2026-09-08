@@ -523,6 +523,16 @@ begin
     raise exception 'That comment no longer exists.' using errcode = 'P0002';
   end if;
 
+  -- Reacting to yourself is refused here, not merely hidden in the UI: the
+  -- reaction bar is disabled on your own comments, but a hand-rolled RPC call
+  -- would otherwise let anyone inflate their own leaderboard standing.
+  if exists (
+    select 1 from public.comments
+    where id = p_comment_id and user_id = auth.uid()
+  ) then
+    raise exception 'You can''t react to your own comment.' using errcode = '42501';
+  end if;
+
   -- Invalid values are rejected by the cast rather than silently ignored.
   begin
     v_wanted := p_reaction::comment_reaction;
@@ -713,6 +723,9 @@ grant execute on function public.profile_rating_summary(uuid) to anon, authentic
 -- to be dropped rather than replaced.
 drop function if exists public.update_my_profile(text, text, text);
 drop function if exists public.update_my_profile(text, text, text, text, boolean);
+-- Also the current signature, so re-running the script is a clean replace
+-- rather than "already exists with same argument types".
+drop function if exists public.update_my_profile(text, text, text, text, boolean, text);
 
 create function public.update_my_profile(
   p_display_name          text,
@@ -1168,6 +1181,15 @@ create policy "cat photos: public read" on storage.objects
 drop policy if exists "cat photos: authenticated upload" on storage.objects;
 create policy "cat photos: authenticated upload" on storage.objects
   for insert to authenticated with check (bucket_id = 'cat-photos');
+
+-- Deleting a cat has to take its image with it, and uploads are namespaced by
+-- uploader id, so a caller may remove files from their own folder and nowhere
+-- else. Without this the bucket has no DELETE policy at all and the cleanup in
+-- deleteCat() would be silently refused by RLS, leaving the file orphaned.
+drop policy if exists "cat photos: owner delete" on storage.objects;
+create policy "cat photos: owner delete" on storage.objects
+  for delete to authenticated
+  using (bucket_id = 'cat-photos' and (storage.foldername(name))[1] = auth.uid()::text);
 
 -- Avatars get their own bucket. Files are namespaced by user id and a user may
 -- only write inside their own folder, so nobody can overwrite someone's face.

@@ -365,6 +365,27 @@ export type DeleteCatResult = { ok: true; refunded: number } | { ok: false; erro
  * the thread through no fault of their own. Daily notes are not refunded; they
  * cost nothing and top back up anyway.
  */
+/**
+ * Pulls the in-bucket path back out of a Supabase public URL, which looks like
+ * .../storage/v1/object/public/<bucket>/<path>. Returns null for anything that
+ * is not a URL into this bucket -- an external Cat API or Wikimedia link, say.
+ */
+function storagePathFromPublicUrl(url: string, bucket: string): string | null {
+  const marker = `/storage/v1/object/public/${bucket}/`;
+  const at = url.indexOf(marker);
+  if (at === -1) return null;
+
+  const path = url.slice(at + marker.length).split('?')[0];
+  if (!path) return null;
+
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    // A malformed escape sequence means this is not a path we wrote.
+    return null;
+  }
+}
+
 export async function deleteCat(catId: string): Promise<DeleteCatResult> {
   const supabase = createClient();
   const {
@@ -372,8 +393,31 @@ export async function deleteCat(catId: string): Promise<DeleteCatResult> {
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: 'Sign in first.' };
 
+  // Read the image details BEFORE the row goes away -- afterwards there is
+  // nothing left to derive the storage path from.
+  const { data: cat } = await supabase
+    .from('cats')
+    .select('image_url, source_type')
+    .eq('id', catId)
+    .maybeSingle();
+
   const { data, error } = await supabase.rpc('delete_cat', { p_cat_id: catId });
   if (error) return { ok: false, error: error.message };
+
+  // Only user uploads live in our bucket; every other source_type is a hotlink
+  // to somebody else's server and has no file here to remove.
+  if (cat?.source_type === 'user_upload') {
+    const path = storagePathFromPublicUrl(String(cat.image_url ?? ''), 'cat-photos');
+    if (path) {
+      // Best effort. The row and the refunds are already committed, so a
+      // storage hiccup must not surface as a failed delete -- the worst case is
+      // an orphaned file, which is what this whole branch exists to reduce.
+      const { error: storageError } = await supabase.storage.from('cat-photos').remove([path]);
+      if (storageError) {
+        console.error(`deleteCat: could not remove ${path} from cat-photos`, storageError.message);
+      }
+    }
+  }
 
   revalidatePath('/');
   return { ok: true, refunded: Number(data ?? 0) };
