@@ -664,6 +664,23 @@ $fn$;
 grant execute on function public.profile_reaction_totals(uuid) to anon, authenticated;
 
 -- ------------------------------------------------------- leaderboards
+-- Board metric name -> reaction enum value. Kept in one place so the all-time
+-- and monthly boards cannot drift apart on what 'loves' means.
+create or replace function public.metric_reaction(p_metric text)
+returns comment_reaction
+language sql
+immutable
+as $fn$
+  select case p_metric
+           when 'likes'    then 'like'
+           when 'funny'    then 'funny'
+           when 'loves'    then 'love'
+           when 'dislikes' then 'dislike'
+         end::comment_reaction;
+$fn$;
+
+grant execute on function public.metric_reaction(text) to anon, authenticated;
+
 -- One function, one metric per call, whitelisted. Returns nothing but the
 -- name, the avatar and the single number being ranked -- no wallet balances,
 -- no user ids, no emails, and no way to ask for a column that is not on the
@@ -693,12 +710,7 @@ begin
       from public.profiles p
       join public.comments c on c.user_id = p.user_id
       join public.comment_reactions r on r.comment_id = c.id
-      where r.reaction = (case p_metric
-                            when 'likes'    then 'like'
-                            when 'funny'    then 'funny'
-                            when 'loves'    then 'love'
-                            else                 'dislike'
-                          end)::comment_reaction
+      where r.reaction = public.metric_reaction(p_metric)
       group by p.id, p.display_name, p.profile_picture_url
       having count(*) > 0
       order by score desc, p.display_name asc nulls last
@@ -711,6 +723,53 @@ end;
 $fn$;
 
 grant execute on function public.leaderboard(text, integer) to anon, authenticated;
+
+-- ------------------------------------------------- this month's standings
+-- Same shape, same whitelist, same security-definer stance as leaderboard();
+-- the only difference is the window. Filtered on comment_reactions.created_at,
+-- so the board is the reactions RECEIVED this calendar month rather than the
+-- comments written in it -- an old comment that gets loved today still counts
+-- toward today's month.
+--
+-- date_trunc('month', now()) means no reset job is needed anywhere: the board
+-- empties itself the moment the date rolls over.
+create or replace function public.monthly_leaderboard(p_metric text, p_limit integer default 50)
+returns table (
+  profile_id          uuid,
+  display_name        text,
+  profile_picture_url text,
+  score               bigint
+)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $fn$
+declare
+  v_limit integer := least(greatest(coalesce(p_limit, 50), 1), 50);
+  v_start timestamptz := date_trunc('month', now());
+  v_end   timestamptz := date_trunc('month', now()) + interval '1 month';
+begin
+  if p_metric not in ('likes', 'funny', 'loves', 'dislikes') then
+    raise exception 'Unknown leaderboard.' using errcode = '22023';
+  end if;
+
+  return query
+    select p.id, p.display_name, p.profile_picture_url, count(*)::bigint as score
+    from public.profiles p
+    join public.comments c on c.user_id = p.user_id
+    join public.comment_reactions r on r.comment_id = c.id
+    where r.created_at >= v_start
+      and r.created_at <  v_end
+      and r.reaction = public.metric_reaction(p_metric)
+    group by p.id, p.display_name, p.profile_picture_url
+    having count(*) > 0
+    order by score desc, p.display_name asc nulls last
+    limit v_limit;
+end;
+$fn$;
+
+grant execute on function public.monthly_leaderboard(text, integer) to anon, authenticated;
 
 grant execute on function public.public_profile(uuid) to anon, authenticated;
 grant execute on function public.profile_rating_summary(uuid) to anon, authenticated;

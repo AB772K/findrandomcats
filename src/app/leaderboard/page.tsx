@@ -16,7 +16,8 @@ export default async function LeaderboardPage() {
 
   // Only the first board is fetched on the server; the rest load on demand when
   // a tab is picked, so opening the page is one query rather than six.
-  const rows = await fetchLeaderboard('likes');
+  // Monthly opens first: it is the board with something at stake.
+  const rows = await fetchLeaderboard('likes', 'monthly');
 
   return (
     <div className="mx-auto max-w-xl animate-fade-up space-y-6">
@@ -25,11 +26,11 @@ export default async function LeaderboardPage() {
           <span className="text-blush-500">Leaderboard</span>
         </h1>
         <p className="text-sm text-ink/55">
-          Who the cat people rate — and who spends the most on saying so.
+          Who the cat people rate — this month, and for all time.
         </p>
       </div>
 
-      <LeaderboardTabs initialMetric="likes" initialRows={rows} />
+      <LeaderboardTabs initialScope="monthly" initialMetric="likes" initialRows={rows} />
 
       <p className="text-center text-xs text-ink/40">
         Rankings are aggregate only — names, avatars and one number each.

@@ -14,6 +14,7 @@ import type {
   MyProfile,
   LeaderboardMetric,
   LeaderboardRow,
+  LeaderboardScope,
   NoteKind,
   NotesWallet,
   ReactionKind,
@@ -425,9 +426,15 @@ export async function deleteCat(catId: string): Promise<DeleteCatResult> {
 
 /* ------------------------------------------------------------ leaderboards */
 
-export async function fetchLeaderboard(metric: LeaderboardMetric): Promise<LeaderboardRow[]> {
+export async function fetchLeaderboard(
+  metric: LeaderboardMetric,
+  scope: LeaderboardScope = 'all-time',
+): Promise<LeaderboardRow[]> {
   const supabase = createClient();
-  const { data, error } = await supabase.rpc('leaderboard', { p_metric: metric, p_limit: 50 });
+  // Two functions rather than a flag, so neither board can be talked into
+  // returning the other's window by a crafted argument.
+  const rpc = scope === 'monthly' ? 'monthly_leaderboard' : 'leaderboard';
+  const { data, error } = await supabase.rpc(rpc, { p_metric: metric, p_limit: 50 });
   if (error) return [];
   return (data ?? []) as LeaderboardRow[];
 }

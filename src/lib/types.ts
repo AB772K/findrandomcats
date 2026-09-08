@@ -109,6 +109,9 @@ export type ReactionState = {
 /** Reaction metrics only -- NOTES spent is deliberately not rankable. */
 export type LeaderboardMetric = 'likes' | 'funny' | 'loves' | 'dislikes';
 
+/** Which window a board covers. Monthly is the current calendar month. */
+export type LeaderboardScope = 'monthly' | 'all-time';
+
 export type LeaderboardRow = {
   profile_id: string;
   display_name: string | null;

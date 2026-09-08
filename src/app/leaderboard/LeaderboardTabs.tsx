@@ -5,7 +5,7 @@ import { useState, useTransition } from 'react';
 import Avatar from '@/components/Avatar';
 import { fetchLeaderboard } from '@/lib/actions';
 import { displayNameOf } from '@/lib/avatar';
-import type { LeaderboardMetric, LeaderboardRow } from '@/lib/types';
+import type { LeaderboardMetric, LeaderboardRow, LeaderboardScope } from '@/lib/types';
 
 export const BOARDS: { metric: LeaderboardMetric; tab: string; heading: string; unit: string }[] = [
   { metric: 'likes', tab: '\u{1F44D} Likes', heading: 'Most likes received', unit: 'likes' },
@@ -17,42 +17,88 @@ export const BOARDS: { metric: LeaderboardMetric; tab: string; heading: string; 
 /** Medal for the top three, plain number after that. */
 const RANKS = ['\u{1F947}', '\u{1F948}', '\u{1F949}'];
 
+const SCOPES: { scope: LeaderboardScope; label: string; blurb: string }[] = [
+  { scope: 'monthly', label: 'Monthly', blurb: 'Reactions received so far this month.' },
+  { scope: 'all-time', label: 'All Time', blurb: 'Every reaction ever received.' },
+];
+
+/** Cache key: a board is a scope AND a metric, not one or the other. */
+const keyOf = (scope: LeaderboardScope, metric: LeaderboardMetric) => `${scope}:${metric}`;
+
 export default function LeaderboardTabs({
+  initialScope,
   initialMetric,
   initialRows,
 }: {
+  initialScope: LeaderboardScope;
   initialMetric: LeaderboardMetric;
   initialRows: LeaderboardRow[];
 }) {
+  const [scope, setScope] = useState<LeaderboardScope>(initialScope);
   const [metric, setMetric] = useState<LeaderboardMetric>(initialMetric);
   const [rows, setRows] = useState<LeaderboardRow[]>(initialRows);
-  // Cached per metric so flipping back to a tab is instant.
-  const [cache, setCache] = useState<Partial<Record<LeaderboardMetric, LeaderboardRow[]>>>({
-    [initialMetric]: initialRows,
+  // Cached per scope+metric so flipping between the eight boards stays instant.
+  const [cache, setCache] = useState<Record<string, LeaderboardRow[]>>({
+    [keyOf(initialScope, initialMetric)]: initialRows,
   });
   const [pending, startTransition] = useTransition();
 
-  function select(next: LeaderboardMetric) {
-    if (next === metric) return;
-    setMetric(next);
+  function show(nextScope: LeaderboardScope, nextMetric: LeaderboardMetric) {
+    if (nextScope === scope && nextMetric === metric) return;
+    setScope(nextScope);
+    setMetric(nextMetric);
 
-    const cached = cache[next];
+    const cached = cache[keyOf(nextScope, nextMetric)];
     if (cached) {
       setRows(cached);
       return;
     }
 
     startTransition(async () => {
-      const fresh = await fetchLeaderboard(next);
-      setCache((prev) => ({ ...prev, [next]: fresh }));
+      const fresh = await fetchLeaderboard(nextMetric, nextScope);
+      setCache((prev) => ({ ...prev, [keyOf(nextScope, nextMetric)]: fresh }));
       setRows(fresh);
     });
   }
 
   const active = BOARDS.find((b) => b.metric === metric) ?? BOARDS[0];
+  const activeScope = SCOPES.find((s) => s.scope === scope) ?? SCOPES[0];
+  const monthLabel = new Date().toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
 
   return (
     <div className="space-y-5">
+      {/* Scope first: it changes what every category below means, so it reads
+          as the parent choice rather than a fifth sibling tab. */}
+      <div className="flex flex-col gap-2">
+        <div
+          role="tablist"
+          aria-label="Leaderboard period"
+          className="inline-flex self-start rounded-full border border-blush-200 bg-paper p-1"
+        >
+          {SCOPES.map((option) => {
+            const on = option.scope === scope;
+            return (
+              <button
+                key={option.scope}
+                type="button"
+                role="tab"
+                aria-selected={on}
+                onClick={() => show(option.scope, metric)}
+                className={`rounded-full px-4 py-1.5 text-sm font-semibold transition duration-200 ${
+                  on ? 'bg-blush-400 text-white shadow-soft' : 'text-ink/55 hover:text-ink'
+                }`}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-xs text-ink/45">
+          {activeScope.blurb}
+          {scope === 'monthly' ? ` (${monthLabel})` : null}
+        </p>
+      </div>
+
       <div role="tablist" aria-label="Leaderboards" className="flex flex-wrap gap-1.5">
         {BOARDS.map((board) => {
           const on = board.metric === metric;
@@ -62,7 +108,7 @@ export default function LeaderboardTabs({
               type="button"
               role="tab"
               aria-selected={on}
-              onClick={() => select(board.metric)}
+              onClick={() => show(scope, board.metric)}
               className={`rounded-full border px-3 py-1.5 text-xs font-medium transition duration-200 ${
                 on
                   ? 'border-blush-300 bg-blush-50 text-ink'
@@ -77,7 +123,12 @@ export default function LeaderboardTabs({
 
       <section className="card p-5 sm:p-6" aria-live="polite">
         <div className="mb-4 flex items-baseline justify-between gap-3">
-          <h2 className="font-display text-base font-semibold">{active.heading}</h2>
+          <h2 className="font-display text-base font-semibold">
+            {active.heading}
+            <span className="ml-2 font-sans text-xs font-normal text-ink/45">
+              {scope === 'monthly' ? monthLabel : 'all time'}
+            </span>
+          </h2>
           <span className="text-xs text-ink/45">
             {rows.length > 0 ? `Top ${rows.length}` : 'Top 50'}
           </span>
@@ -87,7 +138,9 @@ export default function LeaderboardTabs({
           <p className="py-6 text-center text-sm text-ink/45">Loading…</p>
         ) : rows.length === 0 ? (
           <p className="py-6 text-center text-sm text-ink/45">
-            Nobody is on this board yet — be the first.
+            {scope === 'monthly'
+              ? 'No reactions on this board yet this month — be the first.'
+              : 'Nobody is on this board yet — be the first.'}
           </p>
         ) : (
           <ol className="space-y-1">
