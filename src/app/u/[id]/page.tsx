@@ -1,9 +1,11 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import Avatar from '@/components/Avatar';
+import DeleteCatButton from '@/components/DeleteCatButton';
+import SuccessToast from '@/components/SuccessToast';
 import { displayNameOf } from '@/lib/avatar';
 import { createClient } from '@/lib/supabase/server';
-import type { Cat, PublicProfile, RatingTally } from '@/lib/types';
+import { REACTIONS, type Cat, type PublicProfile, type RatingTally, type ReactionTotals } from '@/lib/types';
 
 // Profiles change whenever someone comments, so render per request.
 export const dynamic = 'force-dynamic';
@@ -23,7 +25,13 @@ function Stat({ value, label }: { value: string | number; label: string }) {
   );
 }
 
-export default async function PublicProfilePage({ params }: { params: { id: string } }) {
+export default async function PublicProfilePage({
+  params,
+  searchParams,
+}: {
+  params: { id: string };
+  searchParams: { uploaded?: string };
+}) {
   if (!UUID.test(params.id)) notFound();
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     notFound();
@@ -38,7 +46,7 @@ export default async function PublicProfilePage({ params }: { params: { id: stri
   // Uploads are the exception: `cats` is world-readable by policy, so the grid
   // needs no aggregate wrapper -- and uploaded_by already holds a profiles.id,
   // never a user_id.
-  const [profileResult, ratingsResult, uploadsResult] = await Promise.all([
+  const [profileResult, ratingsResult, uploadsResult, reactionsResult, viewer] = await Promise.all([
     supabase.rpc('public_profile', { p_profile_id: params.id }),
     supabase.rpc('profile_rating_summary', { p_profile_id: params.id }),
     supabase
@@ -48,6 +56,9 @@ export default async function PublicProfilePage({ params }: { params: { id: stri
       .eq('source_type', 'user_upload')
       .order('created_at', { ascending: false })
       .limit(60),
+    // Aggregate totals only -- never which comment earned what.
+    supabase.rpc('profile_reaction_totals', { p_profile_id: params.id }),
+    supabase.auth.getUser(),
   ]);
 
   const profile = (profileResult.data as PublicProfile[] | null)?.[0];
@@ -65,8 +76,40 @@ export default async function PublicProfilePage({ params }: { params: { id: stri
   const uploads = (uploadsResult.data ?? []) as Cat[];
   const name = displayNameOf(profile.display_name);
 
+  const totals = ((reactionsResult.data as ReactionTotals[] | null)?.[0] ?? {
+    likes: 0,
+    funny: 0,
+    loves: 0,
+    dislikes: 0,
+  }) as ReactionTotals;
+  const totalFor: Record<string, number> = {
+    like: Number(totals.likes),
+    funny: Number(totals.funny),
+    love: Number(totals.loves),
+    dislike: Number(totals.dislikes),
+  };
+
+  // The delete control only renders for the uploader. delete_cat() checks
+  // ownership itself, so this is presentation rather than enforcement.
+  const viewerId = viewer.data.user?.id ?? null;
+  let isOwner = false;
+  if (viewerId) {
+    const { data: mine } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('user_id', viewerId)
+      .maybeSingle();
+    isOwner = mine?.id === profile.id;
+  }
+
   return (
     <div className="animate-fade-up space-y-6">
+      {/* Carried across the redirect from uploadCat() so the confirmation lands
+          on the page that now shows the new cat. */}
+      {searchParams.uploaded ? (
+        <SuccessToast key={searchParams.uploaded} message="Cat added!" />
+      ) : null}
+
       <section className="card p-6 sm:p-8">
         <div className="flex flex-col items-center gap-4 text-center sm:flex-row sm:text-left">
           <Avatar
@@ -95,6 +138,21 @@ export default async function PublicProfilePage({ params }: { params: { id: stri
         </div>
       </section>
 
+      <section className="card p-5">
+        <h2 className="mb-3 font-display text-base font-semibold">Reactions received</h2>
+        <div className="grid grid-cols-4 gap-2">
+          {REACTIONS.map(({ kind, emoji, label }) => (
+            <div key={kind} className="rounded-2xl border border-blush-100 bg-blush-50/50 p-3 text-center">
+              <div aria-hidden className="text-xl leading-none">{emoji}</div>
+              <p className="mt-1 font-display text-lg font-bold tabular-nums text-ink">
+                {totalFor[kind].toLocaleString()}
+              </p>
+              <p className="text-[11px] text-ink/50">{label}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat value={Number(profile.comment_count)} label="comments written" />
         <Stat value={Number(profile.daily_notes_spent)} label="notes spent" />
@@ -104,7 +162,7 @@ export default async function PublicProfilePage({ params }: { params: { id: stri
 
       <section className="card space-y-4 p-6">
         <div className="flex items-baseline justify-between gap-3">
-          <h2 className="font-display text-base font-semibold">Cats they uploaded</h2>
+          <h2 className="font-display text-base font-semibold">Cats Uploaded</h2>
           <span className="text-xs text-ink/45">
             {uploads.length} {uploads.length === 1 ? 'cat' : 'cats'}
           </span>
@@ -132,6 +190,11 @@ export default async function PublicProfilePage({ params }: { params: { id: stri
                     {cat.view_count.toLocaleString()} views
                   </span>
                 </Link>
+                {isOwner ? (
+                  <div className="mt-1 text-center">
+                    <DeleteCatButton catId={cat.id} compact />
+                  </div>
+                ) : null}
               </li>
             ))}
           </ul>

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import Avatar from '@/components/Avatar';
 import { saveProfile } from '@/lib/actions';
+import { PREMIUM_FONTS, PREMIUM_FONT_KEYS, premiumFontClass } from '@/app/fonts/premium';
 import { DEFAULT_PREMIUM_COLOR, type MyProfile } from '@/lib/types';
 
 export default function SettingsForm({ profile }: { profile: MyProfile | null }) {
@@ -14,6 +15,7 @@ export default function SettingsForm({ profile }: { profile: MyProfile | null })
   const [preview, setPreview] = useState<string | null>(null);
   const [color, setColor] = useState(profile?.premium_comment_color ?? DEFAULT_PREMIUM_COLOR);
   const [glow, setGlow] = useState(profile?.premium_comment_glow ?? false);
+  const [font, setFont] = useState(profile?.premium_comment_font ?? '');
   // Gate on the CURRENT balance, matching what update_my_profile() enforces.
   const canStyle = (profile?.premium_notes_balance ?? 0) >= 1;
   const [busy, setBusy] = useState(false);
@@ -149,6 +151,23 @@ export default function SettingsForm({ profile }: { profile: MyProfile | null })
                 Accent colour
               </label>
 
+              <label className="flex items-center gap-2 text-xs font-medium text-ink/55">
+                <select
+                  name="premium_comment_font"
+                  value={font}
+                  onChange={(event) => setFont(event.target.value)}
+                  className="field w-auto py-1.5 text-xs"
+                >
+                  <option value="">Default</option>
+                  {PREMIUM_FONT_KEYS.map((key) => (
+                    <option key={key} value={key}>
+                      {PREMIUM_FONTS[key].label}
+                    </option>
+                  ))}
+                </select>
+                Font
+              </label>
+
               <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-ink/55">
                 <input
                   name="premium_comment_glow"
@@ -173,7 +192,9 @@ export default function SettingsForm({ profile }: { profile: MyProfile | null })
               <span className="font-display text-sm font-semibold text-ink">
                 {name.trim() || 'Cat lover'}
               </span>
-              <p className="mt-0.5 text-sm text-ink/80">This is how your premium comments look.</p>
+              <p className={`mt-0.5 text-sm text-ink/80 ${premiumFontClass(font)}`}>
+                This is how your premium comments look.
+              </p>
             </div>
           </>
         ) : (

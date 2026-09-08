@@ -5,14 +5,19 @@ import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import { NO_CAT_MESSAGE, UNAVAILABLE_MESSAGE, detectCat } from '@/lib/cat-detector';
 import { findNotePackage } from '@/lib/notes';
+import { isPremiumFontKey } from '@/app/fonts/premium';
 import { PROFANITY_MESSAGE, isProfane } from '@/lib/profanity';
 import type {
   Cat,
   CatBundle,
   CommentRow,
   MyProfile,
+  LeaderboardMetric,
+  LeaderboardRow,
   NoteKind,
   NotesWallet,
+  ReactionKind,
+  ReactionState,
   RatingTally,
 } from '@/lib/types';
 
@@ -311,7 +316,76 @@ export async function uploadCat(formData: FormData): Promise<{ error: string } |
   if (insertError) return { error: insertError.message };
 
   revalidatePath('/');
-  redirect(`/upload?uploaded=${Date.now()}`);
+  // Land on their own profile so the new cat is visible in the upload grid
+  // straight away; the query param carries the toast across the redirect.
+  redirect(`/u/${profile.id}?uploaded=${Date.now()}`);
+}
+
+/* --------------------------------------------------------------- reactions */
+
+export type ReactionResult =
+  | { ok: true; state: ReactionState }
+  | { ok: false; error: string };
+
+/**
+ * Applies a reaction to a comment. The toggle/switch decision lives in
+ * set_comment_reaction() so it stays atomic: sending the reaction you already
+ * have removes it, a different one replaces it. Returns the fresh counts so the
+ * caller can patch one row rather than refetch the thread.
+ */
+export async function reactToComment(
+  commentId: string,
+  reaction: ReactionKind,
+): Promise<ReactionResult> {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Sign in to react.' };
+
+  const { data, error } = await supabase.rpc('set_comment_reaction', {
+    p_comment_id: commentId,
+    p_reaction: reaction,
+  });
+  if (error) return { ok: false, error: error.message };
+
+  const row = (data as ReactionState[] | null)?.[0];
+  if (!row) return { ok: false, error: 'Could not save that reaction.' };
+
+  return { ok: true, state: row };
+}
+
+/* ------------------------------------------------------------ delete a cat */
+
+export type DeleteCatResult = { ok: true; refunded: number } | { ok: false; error: string };
+
+/**
+ * Removes one of your own uploads. delete_cat() checks ownership itself and
+ * refunds a premium NOTE to everyone who paid one to comment on it -- they lose
+ * the thread through no fault of their own. Daily notes are not refunded; they
+ * cost nothing and top back up anyway.
+ */
+export async function deleteCat(catId: string): Promise<DeleteCatResult> {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Sign in first.' };
+
+  const { data, error } = await supabase.rpc('delete_cat', { p_cat_id: catId });
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath('/');
+  return { ok: true, refunded: Number(data ?? 0) };
+}
+
+/* ------------------------------------------------------------ leaderboards */
+
+export async function fetchLeaderboard(metric: LeaderboardMetric): Promise<LeaderboardRow[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc('leaderboard', { p_metric: metric, p_limit: 10 });
+  if (error) return [];
+  return (data ?? []) as LeaderboardRow[];
 }
 
 /* ----------------------------------------------------------------- profile */
@@ -331,7 +405,7 @@ export async function getMyProfile(): Promise<MyProfile | null> {
   const { data } = await supabase
     .from('profiles')
     .select(
-      'display_name, profile_picture_url, bio, premium_comment_color, premium_comment_glow, premium_notes_balance',
+      'display_name, profile_picture_url, bio, premium_comment_color, premium_comment_glow, premium_comment_font, premium_notes_balance',
     )
     .eq('user_id', user.id)
     .maybeSingle();
@@ -342,6 +416,7 @@ export async function getMyProfile(): Promise<MyProfile | null> {
     bio: (data?.bio as string | null) ?? null,
     premium_comment_color: (data?.premium_comment_color as string | null) ?? null,
     premium_comment_glow: Boolean(data?.premium_comment_glow),
+    premium_comment_font: (data?.premium_comment_font as string | null) ?? null,
     // Styling is gated on the CURRENT balance, so read it here rather than
     // inferring anything from lifetime spend.
     premium_notes_balance: (data?.premium_notes_balance as number | null) ?? 0,
@@ -401,6 +476,9 @@ export async function saveProfile(formData: FormData): Promise<SaveProfileResult
   // one, so hiding the section in the UI is not the security boundary.
   const rawColor = String(formData.get('premium_comment_color') ?? '').trim();
   const glow = formData.get('premium_comment_glow') === 'on';
+  const rawFont = String(formData.get('premium_comment_font') ?? '').trim().toLowerCase();
+  const font = isPremiumFontKey(rawFont) ? rawFont : null;
+  if (rawFont && !font) return { ok: false, error: 'Pick a font from the list.' };
   const color = /^#[0-9a-fA-F]{6}$/.test(rawColor) ? rawColor.toLowerCase() : null;
   if (rawColor && !color) return { ok: false, error: 'Pick a colour in #rrggbb form.' };
 
@@ -411,6 +489,7 @@ export async function saveProfile(formData: FormData): Promise<SaveProfileResult
     p_profile_picture_url: pictureUrl,
     p_premium_comment_color: color,
     p_premium_comment_glow: glow,
+    p_premium_comment_font: font,
   });
   if (error) {
     // update_my_profile() already rewords the unique violation, but a direct

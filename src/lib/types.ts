@@ -26,6 +26,7 @@ export type Profile = {
   bio: string | null;
   premium_comment_color: string | null;
   premium_comment_glow: boolean;
+  premium_comment_font: string | null;
   created_at: string;
 };
 
@@ -58,6 +59,14 @@ export type PublicProfile = {
   rating_count: number;
 };
 
+/** Lifetime reactions a profile has RECEIVED, from profile_reaction_totals(). */
+export type ReactionTotals = {
+  likes: number;
+  funny: number;
+  loves: number;
+  dislikes: number;
+};
+
 /** What the signed-in user may edit about themselves. */
 export type MyProfile = {
   display_name: string | null;
@@ -65,6 +74,7 @@ export type MyProfile = {
   bio: string | null;
   premium_comment_color: string | null;
   premium_comment_glow: boolean;
+  premium_comment_font: string | null;
   /**
    * Current premium balance, not lifetime spend: styling is gated on holding a
    * premium NOTE right now, and the server function checks the same thing.
@@ -74,6 +84,42 @@ export type MyProfile = {
 
 /** Used when a premium commenter has not picked a colour. */
 export const DEFAULT_PREMIUM_COLOR = '#e3a5c0';
+
+/** The four reactions a comment can carry. */
+export type ReactionKind = 'like' | 'funny' | 'love' | 'dislike';
+
+/** Icon + label for each reaction, shared by the bar and the emoji picker. */
+export const REACTIONS: { kind: ReactionKind; emoji: string; label: string }[] = [
+  { kind: 'like', emoji: '\u{1F44D}', label: 'Like' },
+  { kind: 'funny', emoji: '\u{1F602}', label: 'Funny' },
+  { kind: 'love', emoji: '\u2764\uFE0F', label: 'Love' },
+  { kind: 'dislike', emoji: '\u{1F44E}', label: 'Dislike' },
+];
+
+/** Counts returned by set_comment_reaction(), used to patch a row in place. */
+export type ReactionState = {
+  like_count: number;
+  funny_count: number;
+  love_count: number;
+  dislike_count: number;
+  my_reaction: ReactionKind | null;
+};
+
+/** The six ranked lists on /leaderboard. */
+export type LeaderboardMetric =
+  | 'likes'
+  | 'funny'
+  | 'loves'
+  | 'dislikes'
+  | 'daily_notes_spent'
+  | 'premium_notes_spent';
+
+export type LeaderboardRow = {
+  profile_id: string;
+  display_name: string | null;
+  profile_picture_url: string | null;
+  score: number;
+};
 
 /** One row per star value that actually received at least one rating. */
 export type RatingTally = {
@@ -100,6 +146,13 @@ export type CommentRow = {
   /** The author's chosen accent. Null on non-premium comments and unset styles. */
   premium_comment_color: string | null;
   premium_comment_glow: boolean;
+  premium_comment_font: string | null;
+  like_count: number;
+  funny_count: number;
+  love_count: number;
+  dislike_count: number;
+  /** The reader's own reaction, or null. Never anyone else's. */
+  my_reaction: ReactionKind | null;
   /** True only for the signed-in reader's own comments. */
   is_mine: boolean;
   /** ISO timestamp after which this comment can no longer be edited or removed. */

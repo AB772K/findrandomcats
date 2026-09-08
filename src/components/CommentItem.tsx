@@ -4,7 +4,8 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import Avatar from '@/components/Avatar';
 import { displayNameOf } from '@/lib/avatar';
-import type { CommentRow } from '@/lib/types';
+import { premiumFontClass } from '@/app/fonts/premium';
+import { REACTIONS, type CommentRow, type ReactionKind, type ReactionState } from '@/lib/types';
 
 function remainingLabel(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000));
@@ -15,12 +16,16 @@ function remainingLabel(ms: number): string {
 
 export default function CommentItem({
   comment,
+  signedIn,
   onEdit,
   onDelete,
+  onReact,
 }: {
   comment: CommentRow;
+  signedIn: boolean;
   onEdit: (commentId: string, body: string) => Promise<string | null>;
   onDelete: (commentId: string) => Promise<string | null>;
+  onReact: (commentId: string, reaction: ReactionKind) => Promise<ReactionState | string>;
 }) {
   const name = displayNameOf(comment.display_name);
   const premium = comment.used_premium_note;
@@ -28,6 +33,56 @@ export default function CommentItem({
   // for the rest, so an unstyled author simply falls back to the house look.
   const accent = premium ? comment.premium_comment_color : null;
   const glow = premium && comment.premium_comment_glow;
+  // Empty string for everyone else, so no font file is ever requested for an
+  // ordinary comment.
+  const fontClass = premium ? premiumFontClass(comment.premium_comment_font) : '';
+
+  // Reaction counts are held locally so a tap updates instantly; the server's
+  // authoritative numbers replace them when the call returns.
+  const [reactions, setReactions] = useState<ReactionState>({
+    like_count: Number(comment.like_count ?? 0),
+    funny_count: Number(comment.funny_count ?? 0),
+    love_count: Number(comment.love_count ?? 0),
+    dislike_count: Number(comment.dislike_count ?? 0),
+    my_reaction: comment.my_reaction ?? null,
+  });
+  const [reacting, setReacting] = useState(false);
+
+  // A thread reload (new comment, edit, delete) brings fresh counts with it.
+  useEffect(() => {
+    setReactions({
+      like_count: Number(comment.like_count ?? 0),
+      funny_count: Number(comment.funny_count ?? 0),
+      love_count: Number(comment.love_count ?? 0),
+      dislike_count: Number(comment.dislike_count ?? 0),
+      my_reaction: comment.my_reaction ?? null,
+    });
+  }, [
+    comment.like_count,
+    comment.funny_count,
+    comment.love_count,
+    comment.dislike_count,
+    comment.my_reaction,
+  ]);
+
+  const countFor = (kind: ReactionKind) =>
+    kind === 'like'
+      ? reactions.like_count
+      : kind === 'funny'
+        ? reactions.funny_count
+        : kind === 'love'
+          ? reactions.love_count
+          : reactions.dislike_count;
+
+  async function react(kind: ReactionKind) {
+    if (!signedIn || reacting) return;
+    setReacting(true);
+    setError(null);
+    const result = await onReact(comment.id, kind);
+    setReacting(false);
+    if (typeof result === 'string') setError(result);
+    else setReactions(result);
+  }
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(comment.body);
@@ -175,11 +230,45 @@ export default function CommentItem({
                 </div>
               </div>
             ) : (
-              <p className="mt-0.5 whitespace-pre-wrap break-words text-sm text-ink/80">
+              <p
+                className={`mt-0.5 whitespace-pre-wrap break-words text-sm text-ink/80 ${fontClass}`}
+              >
                 {comment.body}
               </p>
             )}
           </div>
+        </div>
+
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5 pl-1">
+          {REACTIONS.map(({ kind, emoji, label }) => {
+            const mine = reactions.my_reaction === kind;
+            const count = countFor(kind);
+            return (
+              <button
+                key={kind}
+                type="button"
+                onClick={() => react(kind)}
+                disabled={!signedIn || reacting}
+                aria-pressed={mine}
+                title={
+                  signedIn
+                    ? mine
+                      ? `Remove your ${label.toLowerCase()}`
+                      : label
+                    : 'Sign in to react'
+                }
+                className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition duration-200 ${
+                  mine
+                    ? 'border-blush-300 bg-blush-50 font-semibold text-ink'
+                    : 'border-transparent text-ink/45 hover:border-blush-100 hover:bg-blush-50/60'
+                } ${!signedIn ? 'cursor-default opacity-60' : ''}`}
+              >
+                <span aria-hidden>{emoji}</span>
+                <span className="sr-only">{label}</span>
+                {count > 0 ? <span className="tabular-nums">{count}</span> : null}
+              </button>
+            );
+          })}
         </div>
 
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 pl-4 text-[11px] text-ink/40">

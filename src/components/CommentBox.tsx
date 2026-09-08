@@ -1,9 +1,16 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import CommentItem from '@/components/CommentItem';
-import type { CommentRow, NoteKind, NotesWallet } from '@/lib/types';
+import EmojiPicker from '@/components/EmojiPicker';
+import type {
+  CommentRow,
+  NoteKind,
+  NotesWallet,
+  ReactionKind,
+  ReactionState,
+} from '@/lib/types';
 
 export default function CommentBox({
   comments,
@@ -12,6 +19,7 @@ export default function CommentBox({
   onPost,
   onEdit,
   onDelete,
+  onReact,
 }: {
   comments: CommentRow[];
   wallet: NotesWallet | null;
@@ -19,10 +27,30 @@ export default function CommentBox({
   onPost: (body: string, noteKind: NoteKind) => Promise<string | null>;
   onEdit: (commentId: string, body: string) => Promise<string | null>;
   onDelete: (commentId: string) => Promise<string | null>;
+  onReact: (commentId: string, reaction: ReactionKind) => Promise<ReactionState | string>;
 }) {
   const [body, setBody] = useState('');
+  const textarea = useRef<HTMLTextAreaElement>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  /** Drops an emoji in at the caret rather than always appending at the end. */
+  function insertEmoji(emoji: string) {
+    const el = textarea.current;
+    setBody((current) => {
+      if (!el) return current + emoji;
+      const start = el.selectionStart ?? current.length;
+      const end = el.selectionEnd ?? current.length;
+      const next = current.slice(0, start) + emoji + current.slice(end);
+      // Restore the caret after React has painted the new value.
+      requestAnimationFrame(() => {
+        el.focus();
+        const at = start + emoji.length;
+        el.setSelectionRange(at, at);
+      });
+      return next;
+    });
+  }
 
   const daily = wallet?.daily_notes_balance ?? 0;
   const premium = wallet?.premium_notes_balance ?? 0;
@@ -75,6 +103,7 @@ export default function CommentBox({
       {signedIn ? (
         <form onSubmit={submit} className="space-y-3">
           <textarea
+            ref={textarea}
             value={body}
             onChange={(event) => setBody(event.target.value)}
             rows={3}
@@ -120,7 +149,8 @@ export default function CommentBox({
           </fieldset>
 
           <div className="flex items-center justify-between gap-3">
-            <p className="text-xs text-ink/45">
+            <EmojiPicker onPick={insertEmoji} disabled={blocked || busy} />
+            <p className="flex-1 text-xs text-ink/45">
               {broke ? (
                 <>
                   Out of NOTES —{' '}
@@ -157,8 +187,10 @@ export default function CommentBox({
           <CommentItem
             key={comment.id}
             comment={comment}
+            signedIn={signedIn}
             onEdit={onEdit}
             onDelete={onDelete}
+            onReact={onReact}
           />
         ))}
       </ul>

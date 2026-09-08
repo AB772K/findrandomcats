@@ -90,6 +90,15 @@ exception when duplicate_object then null; end $do$;
 -- comments were already paid for.
 alter table public.profiles add column if not exists premium_comment_color text;
 alter table public.profiles add column if not exists premium_comment_glow boolean not null default false;
+alter table public.profiles add column if not exists premium_comment_font text;
+
+do $do$ begin
+  -- Whitelisted rather than free text: the value becomes a CSS class name on
+  -- the client, and only these six have a font actually shipped for them.
+  alter table public.profiles add constraint profiles_premium_comment_font_known
+    check (premium_comment_font is null or premium_comment_font in
+      ('inter', 'quicksand', 'anton', 'playfair', 'jetbrains', 'caveat'));
+exception when duplicate_object then null; end $do$;
 
 do $do$ begin
   -- Constrained to a 6-digit hex literal so the value can be dropped straight
@@ -158,6 +167,30 @@ alter table public.comments add column if not exists used_premium_note boolean n
 -- Set by edit_comment(); null means the comment has never been changed.
 alter table public.comments add column if not exists edited_at timestamptz;
 
+-- --------------------------------------------------- comment reactions
+do $do$ begin
+  create type comment_reaction as enum ('like', 'funny', 'love', 'dislike');
+exception when duplicate_object then null; end $do$;
+
+-- One row per (comment, user). The unique constraint is what makes reactions
+-- switchable rather than stackable: changing your mind updates the row instead
+-- of adding a second one. Removing a reaction deletes the row outright.
+--
+-- Reacting to your own comment is allowed, matching how the big social sites
+-- behave. It is not much of a leaderboard exploit: every comment costs a NOTE,
+-- so self-congratulation is rate-limited by the wallet.
+create table if not exists public.comment_reactions (
+  id         uuid primary key default gen_random_uuid(),
+  comment_id uuid not null references public.comments (id) on delete cascade,
+  user_id    uuid not null references auth.users (id) on delete cascade,
+  reaction   comment_reaction not null,
+  created_at timestamptz not null default now(),
+  constraint comment_reactions_comment_user_unique unique (comment_id, user_id)
+);
+
+create index if not exists comment_reactions_comment_id_idx on public.comment_reactions (comment_id);
+create index if not exists comment_reactions_user_id_idx on public.comment_reactions (user_id);
+
 create index if not exists comments_cat_id_created_at_idx on public.comments (cat_id, created_at desc);
 create index if not exists comments_user_id_idx on public.comments (user_id);
 create index if not exists ratings_cat_id_idx on public.ratings (cat_id);
@@ -212,6 +245,7 @@ alter table public.profiles enable row level security;
 alter table public.cats     enable row level security;
 alter table public.ratings  enable row level security;
 alter table public.comments enable row level security;
+alter table public.comment_reactions enable row level security;
 
 -- profiles: you can only ever see / touch your own row.
 drop policy if exists "profiles: read own" on public.profiles;
@@ -263,6 +297,12 @@ create policy "comments: authenticated read" on public.comments
 drop policy if exists "comments: delete own" on public.comments;
 -- Likewise there is no UPDATE policy: edits must go through edit_comment(),
 -- which re-checks ownership and the window.
+
+-- comment_reactions: no policies at all. Counts reach the client already
+-- aggregated by cat_comments(), and writes go through set_comment_reaction(),
+-- which owns the toggle/switch logic. Direct row access would let a client
+-- enumerate exactly who reacted to what.
+drop policy if exists "reactions: read all" on public.comment_reactions;
 -- NOTE: there is deliberately no INSERT policy. Comments must go through
 -- post_comment(), which charges the NOTE in the same transaction.
 
@@ -381,19 +421,25 @@ drop function if exists public.cat_comments(uuid);
 
 create function public.cat_comments(p_cat_id uuid)
 returns table (
-  id                  uuid,
-  cat_id              uuid,
-  body                text,
-  created_at          timestamptz,
-  edited_at           timestamptz,
-  used_premium_note   boolean,
-  author_id           uuid,
-  display_name        text,
-  profile_picture_url text,
+  id                    uuid,
+  cat_id                uuid,
+  body                  text,
+  created_at            timestamptz,
+  edited_at             timestamptz,
+  used_premium_note     boolean,
+  author_id             uuid,
+  display_name          text,
+  profile_picture_url   text,
   premium_comment_color text,
   premium_comment_glow  boolean,
-  is_mine             boolean,
-  editable_until      timestamptz
+  premium_comment_font  text,
+  is_mine               boolean,
+  editable_until        timestamptz,
+  like_count            bigint,
+  funny_count           bigint,
+  love_count            bigint,
+  dislike_count         bigint,
+  my_reaction           text
 )
 language sql
 stable
@@ -410,21 +456,105 @@ as $fn$
          p.display_name,
          p.profile_picture_url,
          -- Styling only travels with comments that actually cost a premium
-         -- NOTE, so a custom colour cannot leak onto ordinary ones.
+         -- NOTE, so a custom look cannot leak onto ordinary ones.
          case when c.used_premium_note then p.premium_comment_color end,
          case when c.used_premium_note then coalesce(p.premium_comment_glow, false) else false end,
+         case when c.used_premium_note then p.premium_comment_font end,
          -- Ownership as a bare boolean: the UI needs to know whether to offer
          -- edit/delete without ever learning whose user_id owns a comment.
          c.user_id = auth.uid(),
-         c.created_at + public.comment_edit_window()
+         c.created_at + public.comment_edit_window(),
+         -- Reactions come back pre-aggregated. The only per-person fact
+         -- returned is the reader's OWN reaction -- nobody can learn who else
+         -- reacted to what.
+         coalesce(rx.likes, 0),
+         coalesce(rx.funny, 0),
+         coalesce(rx.loves, 0),
+         coalesce(rx.dislikes, 0),
+         (select r.reaction::text
+          from public.comment_reactions r
+          where r.comment_id = c.id and r.user_id = auth.uid())
   from public.comments c
   left join public.profiles p on p.user_id = c.user_id
+  left join lateral (
+    select count(*) filter (where r.reaction = 'like')    as likes,
+           count(*) filter (where r.reaction = 'funny')   as funny,
+           count(*) filter (where r.reaction = 'love')    as loves,
+           count(*) filter (where r.reaction = 'dislike') as dislikes
+    from public.comment_reactions r
+    where r.comment_id = c.id
+  ) rx on true
   where c.cat_id = p_cat_id
   order by c.created_at desc
   limit 100;
 $fn$;
 
 grant execute on function public.cat_comments(uuid) to authenticated;
+
+-- --------------------------------------------------- react to a comment
+-- Toggle/switch in one call: sending the reaction you already have removes it,
+-- sending a different one replaces it, and the unique constraint guarantees a
+-- person can never hold two reactions on the same comment. Returns the fresh
+-- counts so the caller does not have to refetch the whole thread.
+create or replace function public.set_comment_reaction(
+  p_comment_id uuid,
+  p_reaction   text
+)
+returns table (
+  like_count    bigint,
+  funny_count   bigint,
+  love_count    bigint,
+  dislike_count bigint,
+  my_reaction   text
+)
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+declare
+  v_existing comment_reaction;
+  v_wanted   comment_reaction;
+begin
+  if auth.uid() is null then
+    raise exception 'You must be signed in to react.' using errcode = '42501';
+  end if;
+
+  if not exists (select 1 from public.comments where id = p_comment_id) then
+    raise exception 'That comment no longer exists.' using errcode = 'P0002';
+  end if;
+
+  -- Invalid values are rejected by the cast rather than silently ignored.
+  begin
+    v_wanted := p_reaction::comment_reaction;
+  exception when invalid_text_representation then
+    raise exception 'Unknown reaction.' using errcode = '22023';
+  end;
+
+  select r.reaction into v_existing
+  from public.comment_reactions r
+  where r.comment_id = p_comment_id and r.user_id = auth.uid();
+
+  if v_existing is not null and v_existing = v_wanted then
+    delete from public.comment_reactions
+    where comment_id = p_comment_id and user_id = auth.uid();
+  else
+    insert into public.comment_reactions (comment_id, user_id, reaction)
+    values (p_comment_id, auth.uid(), v_wanted)
+    on conflict (comment_id, user_id) do update set reaction = excluded.reaction;
+  end if;
+
+  return query
+    select count(*) filter (where r.reaction = 'like'),
+           count(*) filter (where r.reaction = 'funny'),
+           count(*) filter (where r.reaction = 'love'),
+           count(*) filter (where r.reaction = 'dislike'),
+           max(r.reaction::text) filter (where r.user_id = auth.uid())
+    from public.comment_reactions r
+    where r.comment_id = p_comment_id;
+end;
+$fn$;
+
+grant execute on function public.set_comment_reaction(uuid, text) to authenticated;
 
 -- ------------------------------------------------------ public profiles
 -- The /u/[id] page reads only through these two functions. Lifetime spend is
@@ -489,6 +619,88 @@ as $fn$
   order by t.stars;
 $fn$;
 
+-- Lifetime reactions RECEIVED across everything this person has written.
+-- Aggregate only: totals, never which comment or who reacted.
+create or replace function public.profile_reaction_totals(p_profile_id uuid)
+returns table (likes bigint, funny bigint, loves bigint, dislikes bigint)
+language sql
+stable
+security definer
+set search_path = public
+as $fn$
+  select count(*) filter (where r.reaction = 'like'),
+         count(*) filter (where r.reaction = 'funny'),
+         count(*) filter (where r.reaction = 'love'),
+         count(*) filter (where r.reaction = 'dislike')
+  from public.profiles p
+  join public.comments c on c.user_id = p.user_id
+  join public.comment_reactions r on r.comment_id = c.id
+  where p.id = p_profile_id;
+$fn$;
+
+grant execute on function public.profile_reaction_totals(uuid) to anon, authenticated;
+
+-- ------------------------------------------------------- leaderboards
+-- One function, one metric per call, whitelisted. Returns nothing but the
+-- name, the avatar and the single number being ranked -- no wallet balances,
+-- no user ids, no emails, and no way to ask for a column that is not on the
+-- list. Profiles scoring zero are left out rather than padding the table.
+create or replace function public.leaderboard(p_metric text, p_limit integer default 10)
+returns table (
+  profile_id          uuid,
+  display_name        text,
+  profile_picture_url text,
+  score               bigint
+)
+language plpgsql
+stable
+security definer
+set search_path = public
+as $fn$
+declare
+  v_limit integer := least(greatest(coalesce(p_limit, 10), 1), 50);
+begin
+  if p_metric in ('likes', 'funny', 'loves', 'dislikes') then
+    return query
+      select p.id, p.display_name, p.profile_picture_url, count(*)::bigint as score
+      from public.profiles p
+      join public.comments c on c.user_id = p.user_id
+      join public.comment_reactions r on r.comment_id = c.id
+      where r.reaction = (case p_metric
+                            when 'likes'    then 'like'
+                            when 'funny'    then 'funny'
+                            when 'loves'    then 'love'
+                            else                 'dislike'
+                          end)::comment_reaction
+      group by p.id, p.display_name, p.profile_picture_url
+      having count(*) > 0
+      order by score desc, p.display_name asc nulls last
+      limit v_limit;
+
+  elsif p_metric = 'daily_notes_spent' then
+    return query
+      select p.id, p.display_name, p.profile_picture_url, p.daily_notes_spent::bigint
+      from public.profiles p
+      where p.daily_notes_spent > 0
+      order by p.daily_notes_spent desc, p.display_name asc nulls last
+      limit v_limit;
+
+  elsif p_metric = 'premium_notes_spent' then
+    return query
+      select p.id, p.display_name, p.profile_picture_url, p.premium_notes_spent::bigint
+      from public.profiles p
+      where p.premium_notes_spent > 0
+      order by p.premium_notes_spent desc, p.display_name asc nulls last
+      limit v_limit;
+
+  else
+    raise exception 'Unknown leaderboard.' using errcode = '22023';
+  end if;
+end;
+$fn$;
+
+grant execute on function public.leaderboard(text, integer) to anon, authenticated;
+
 grant execute on function public.public_profile(uuid) to anon, authenticated;
 grant execute on function public.profile_rating_summary(uuid) to anon, authenticated;
 
@@ -500,13 +712,15 @@ grant execute on function public.profile_rating_summary(uuid) to anon, authentic
 -- Signature gains the two styling fields, so the old three-argument version has
 -- to be dropped rather than replaced.
 drop function if exists public.update_my_profile(text, text, text);
+drop function if exists public.update_my_profile(text, text, text, text, boolean);
 
 create function public.update_my_profile(
   p_display_name          text,
   p_bio                   text,
   p_profile_picture_url   text,
   p_premium_comment_color text default null,
-  p_premium_comment_glow  boolean default false
+  p_premium_comment_glow  boolean default false,
+  p_premium_comment_font  text default null
 )
 returns public.profiles
 language plpgsql
@@ -517,6 +731,7 @@ declare
   v_profile public.profiles;
   v_glow    boolean := coalesce(p_premium_comment_glow, false);
   v_color   text    := nullif(btrim(coalesce(p_premium_comment_color, '')), '');
+  v_font    text    := nullif(btrim(lower(coalesce(p_premium_comment_font, ''))), '');
 begin
   if auth.uid() is null then
     raise exception 'You must be signed in.' using errcode = '42501';
@@ -531,13 +746,17 @@ begin
   -- The real gate. The UI hides this section without premium NOTES, but hiding
   -- a control is not a permission check: a hand-rolled RPC call would otherwise
   -- set a custom style having never bought anything.
-  if v_profile.premium_notes_balance < 1 and (v_color is not null or v_glow) then
+  if v_profile.premium_notes_balance < 1 and (v_color is not null or v_glow or v_font is not null) then
     raise exception 'Premium comment styling needs at least 1 premium NOTE.'
       using errcode = 'P0001';
   end if;
 
   if v_color is not null and v_color !~* '^#[0-9a-f]{6}$' then
     raise exception 'Pick a colour in #rrggbb form.' using errcode = '22023';
+  end if;
+
+  if v_font is not null and v_font not in ('inter','quicksand','anton','playfair','jetbrains','caveat') then
+    raise exception 'Unknown font.' using errcode = '22023';
   end if;
 
   begin
@@ -558,6 +777,10 @@ begin
         premium_comment_glow  = case
                                   when premium_notes_balance >= 1 then v_glow
                                   else premium_comment_glow
+                                end,
+        premium_comment_font  = case
+                                  when premium_notes_balance >= 1 then v_font
+                                  else premium_comment_font
                                 end
     where user_id = auth.uid()
     returning * into v_profile;
@@ -572,7 +795,7 @@ begin
 end;
 $fn$;
 
-grant execute on function public.update_my_profile(text, text, text, text, boolean) to authenticated;
+grant execute on function public.update_my_profile(text, text, text, text, boolean, text) to authenticated;
 
 -- ------------------------------------------------------- the daily wallet
 -- Tops the daily allowance back up to 3 if a full 24h has passed. Written as a
@@ -843,11 +1066,84 @@ begin
     where id = v_profile.id;
   end if;
 
+  -- Reactions go with the comment. The FK is ON DELETE CASCADE so this is
+  -- belt and braces, but doing it explicitly keeps the intent visible: the
+  -- author's public totals must fall by exactly what this comment earned, in
+  -- the same transaction as the refund and the delete.
+  delete from public.comment_reactions where comment_id = p_comment_id;
   delete from public.comments where id = p_comment_id;
 end;
 $fn$;
 
 grant execute on function public.delete_comment(uuid) to authenticated;
+
+-- ------------------------------------------ delete one of your own cats
+-- Removing a cat destroys every comment on it, including ones people paid a
+-- premium NOTE to write. Those NOTES are refunded: the commenter did nothing
+-- wrong and the thread is being taken away from them. Daily notes are not
+-- refunded -- they cost nothing and top back up on their own.
+--
+-- Refunds are aggregated per commenter, so someone who left five premium
+-- comments gets five NOTES back in a single UPDATE.
+create or replace function public.delete_cat(p_cat_id uuid)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+declare
+  v_cat      public.cats;
+  v_profile  public.profiles;
+  v_refunded integer := 0;
+begin
+  if auth.uid() is null then
+    raise exception 'You must be signed in.' using errcode = '42501';
+  end if;
+
+  select * into v_cat from public.cats where id = p_cat_id;
+  if not found then
+    raise exception 'That cat no longer exists.' using errcode = 'P0002';
+  end if;
+
+  select * into v_profile from public.profiles where user_id = auth.uid();
+  if not found then
+    raise exception 'No profile found for this account.' using errcode = 'P0002';
+  end if;
+
+  -- Uploader only. uploaded_by holds a profiles.id, so this compares like for
+  -- like; a seeded cat has uploaded_by null and can never match.
+  if v_cat.uploaded_by is null or v_cat.uploaded_by <> v_profile.id then
+    raise exception 'You can only delete cats you uploaded.' using errcode = '42501';
+  end if;
+
+  select coalesce(sum(x.n), 0)::integer into v_refunded
+  from (
+    select count(*)::int as n
+    from public.comments
+    where cat_id = p_cat_id and used_premium_note
+    group by user_id
+  ) x;
+
+  update public.profiles p
+  set premium_notes_balance = p.premium_notes_balance + x.n,
+      premium_notes_spent   = greatest(p.premium_notes_spent - x.n, 0)
+  from (
+    select user_id, count(*)::int as n
+    from public.comments
+    where cat_id = p_cat_id and used_premium_note
+    group by user_id
+  ) x
+  where p.user_id = x.user_id;
+
+  -- comments, ratings and (through comments) comment_reactions are all
+  -- ON DELETE CASCADE from here.
+  delete from public.cats where id = p_cat_id;
+
+  return v_refunded;
+end;
+$fn$;
+
+grant execute on function public.delete_cat(uuid) to authenticated;
 
 -- --------------------------------------------------- buying premium notes
 -- Payments are NOT live. There is deliberately no function here that adds to

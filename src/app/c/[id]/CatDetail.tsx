@@ -3,8 +3,14 @@
 import { useCallback, useState } from 'react';
 import CommentBox from '@/components/CommentBox';
 import StarPicker from '@/components/StarPicker';
-import { deleteComment, editComment, postComment, rateCat } from '@/lib/actions';
-import type { CatBundle, NoteKind, NotesWallet } from '@/lib/types';
+import {
+  deleteComment,
+  editComment,
+  postComment,
+  rateCat,
+  reactToComment,
+} from '@/lib/actions';
+import type { CatBundle, NoteKind, NotesWallet, ReactionKind } from '@/lib/types';
 
 /**
  * The interactive half of a cat's detail page. Rating and commenting reuse the
@@ -57,6 +63,11 @@ export default function CatDetail({
     [bundle.cat.id],
   );
 
+  const handleReact = useCallback(async (commentId: string, reaction: ReactionKind) => {
+    const result = await reactToComment(commentId, reaction);
+    return result.ok ? result.state : result.error;
+  }, []);
+
   const handleDelete = useCallback(
     async (commentId: string) => {
       const result = await deleteComment(bundle.cat.id, commentId);
@@ -86,6 +97,7 @@ export default function CatDetail({
         onPost={handleComment}
         onEdit={handleEdit}
         onDelete={handleDelete}
+        onReact={handleReact}
       />
     </div>
   );

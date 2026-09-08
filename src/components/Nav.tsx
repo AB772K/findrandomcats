@@ -47,6 +47,9 @@ export default function Nav({
                 ) : null}
               </Link>
 
+              <Link href="/leaderboard" className="text-ink/65 transition hover:text-ink">
+                Leaderboard
+              </Link>
               <Link href="/upload" className="text-ink/65 transition hover:text-ink">
                 Upload
               </Link>
@@ -76,9 +79,14 @@ export default function Nav({
               </form>
             </>
           ) : (
-            <Link href="/login" className="btn-primary">
-              Sign in
-            </Link>
+            <>
+              <Link href="/leaderboard" className="text-ink/65 transition hover:text-ink">
+                Leaderboard
+              </Link>
+              <Link href="/login" className="btn-primary">
+                Sign in
+              </Link>
+            </>
           )}
         </div>
       </nav>

@@ -7,8 +7,15 @@ import CommentBox from '@/components/CommentBox';
 import RatingBreakdown from '@/components/RatingBreakdown';
 import StarPicker from '@/components/StarPicker';
 import VideoAdSlot from '@/components/VideoAdSlot';
-import { deleteComment, editComment, fetchRandomCat, postComment, rateCat } from '@/lib/actions';
-import type { CatBundle, NoteKind, NotesWallet } from '@/lib/types';
+import {
+  deleteComment,
+  editComment,
+  fetchRandomCat,
+  postComment,
+  rateCat,
+  reactToComment,
+} from '@/lib/actions';
+import type { CatBundle, NoteKind, NotesWallet, ReactionKind } from '@/lib/types';
 
 const CATS_PER_AD = 2;
 /** The rewarded-video placeholder is rarer than the banner so it stays a treat. */
@@ -62,6 +69,11 @@ export default function CatFeed({
       setLoading(false);
     }
   }, [seenIds, freshRun]);
+
+  const handleReact = useCallback(async (commentId: string, reaction: ReactionKind) => {
+    const result = await reactToComment(commentId, reaction);
+    return result.ok ? result.state : result.error;
+  }, []);
 
   const handleRate = useCallback(
     async (stars: number) => {
@@ -157,6 +169,7 @@ export default function CatFeed({
               onPost={handleComment}
               onEdit={handleEdit}
               onDelete={handleDelete}
+              onReact={handleReact}
             />
           </div>
         </article>
