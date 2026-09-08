@@ -182,7 +182,7 @@ export async function postComment(
 }
 
 export type CommentMutationResult =
-  | { ok: true; comments: CommentRow[] }
+  | { ok: true; comments: CommentRow[]; wallet?: NotesWallet }
   | { ok: false; error: string };
 
 async function reloadComments(catId: string): Promise<CommentRow[]> {
@@ -224,7 +224,10 @@ export async function deleteComment(
   const { error } = await supabase.rpc('delete_comment', { p_comment_id: commentId });
   if (error) return { ok: false, error: error.message };
 
-  return { ok: true, comments: await reloadComments(catId) };
+  // Deleting refunds the NOTE, so the wallet has to come back with the comments
+  // or the balance on screen would still show it as spent.
+  const [comments, wallet] = await Promise.all([reloadComments(catId), getNotesWallet()]);
+  return { ok: true, comments, wallet: wallet ?? undefined };
 }
 
 /* ------------------------------------------------------------------- notes */
@@ -308,7 +311,7 @@ export async function uploadCat(formData: FormData): Promise<{ error: string } |
   if (insertError) return { error: insertError.message };
 
   revalidatePath('/');
-  redirect('/upload?uploaded=1');
+  redirect(`/upload?uploaded=${Date.now()}`);
 }
 
 /* ----------------------------------------------------------------- profile */
@@ -327,11 +330,22 @@ export async function getMyProfile(): Promise<MyProfile | null> {
 
   const { data } = await supabase
     .from('profiles')
-    .select('display_name, profile_picture_url, bio')
+    .select(
+      'display_name, profile_picture_url, bio, premium_comment_color, premium_comment_glow, premium_notes_balance',
+    )
     .eq('user_id', user.id)
     .maybeSingle();
 
-  return (data as MyProfile | null) ?? { display_name: null, profile_picture_url: null, bio: null };
+  return {
+    display_name: (data?.display_name as string | null) ?? null,
+    profile_picture_url: (data?.profile_picture_url as string | null) ?? null,
+    bio: (data?.bio as string | null) ?? null,
+    premium_comment_color: (data?.premium_comment_color as string | null) ?? null,
+    premium_comment_glow: Boolean(data?.premium_comment_glow),
+    // Styling is gated on the CURRENT balance, so read it here rather than
+    // inferring anything from lifetime spend.
+    premium_notes_balance: (data?.premium_notes_balance as number | null) ?? 0,
+  };
 }
 
 /**
@@ -382,11 +396,21 @@ export async function saveProfile(formData: FormData): Promise<SaveProfileResult
     pictureUrl = supabase.storage.from('avatars').getPublicUrl(path).data.publicUrl;
   }
 
+  // Sent on every save, but the database only applies them while the user holds
+  // a premium NOTE -- and rejects the call outright if a style is set without
+  // one, so hiding the section in the UI is not the security boundary.
+  const rawColor = String(formData.get('premium_comment_color') ?? '').trim();
+  const glow = formData.get('premium_comment_glow') === 'on';
+  const color = /^#[0-9a-fA-F]{6}$/.test(rawColor) ? rawColor.toLowerCase() : null;
+  if (rawColor && !color) return { ok: false, error: 'Pick a colour in #rrggbb form.' };
+
   const { error } = await supabase.rpc('update_my_profile', {
     p_display_name: displayName,
     p_bio: bio,
     // null leaves the existing picture in place.
     p_profile_picture_url: pictureUrl,
+    p_premium_comment_color: color,
+    p_premium_comment_glow: glow,
   });
   if (error) {
     // update_my_profile() already rewords the unique violation, but a direct
@@ -394,6 +418,9 @@ export async function saveProfile(formData: FormData): Promise<SaveProfileResult
     const taken =
       /already taken/i.test(error.message) ||
       /profiles_display_name_lower_key|duplicate key/i.test(error.message);
+    if (/premium NOTE/i.test(error.message)) {
+      return { ok: false, error: 'Premium comment styling needs at least 1 premium NOTE.' };
+    }
     return {
       ok: false,
       error: taken ? 'That name is already taken.' : error.message,

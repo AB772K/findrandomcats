@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import UploadForm from '@/app/upload/UploadForm';
+import SuccessToast from '@/components/SuccessToast';
 import { createClient } from '@/lib/supabase/server';
 
 export const metadata = { title: 'Upload a cat · FindRandomCats' };
@@ -31,10 +32,19 @@ export default async function UploadPage({
         </p>
       </div>
 
+      {/* keyed on the redirect's timestamp so two uploads in a row each get
+          their own toast rather than React reusing a faded-out one */}
       {searchParams.uploaded ? (
-        <p className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-          Uploaded — <Link href="/" className="underline">go find some cats</Link>.
-        </p>
+        <>
+          <SuccessToast key={searchParams.uploaded} message="Cat added!" />
+          <p className="rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-center text-sm text-emerald-800">
+            Your cat is in the pool —{' '}
+            <Link href="/" className="font-semibold underline">
+              go find some cats
+            </Link>
+            .
+          </p>
+        </>
       ) : null}
 
       <UploadForm />

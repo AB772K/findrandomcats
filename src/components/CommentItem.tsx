@@ -24,6 +24,10 @@ export default function CommentItem({
 }) {
   const name = displayNameOf(comment.display_name);
   const premium = comment.used_premium_note;
+  // Only premium comments carry a colour; cat_comments() already nulls it out
+  // for the rest, so an unstyled author simply falls back to the house look.
+  const accent = premium ? comment.premium_comment_color : null;
+  const glow = premium && comment.premium_comment_glow;
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(comment.body);
@@ -91,9 +95,22 @@ export default function CommentItem({
             frame, not a glow, so it reads as a nicer edge rather than plastic. */}
         <div
           className={
-            premium
+            premium && !accent
               ? 'animate-shimmer rounded-2xl rounded-tl-md bg-[linear-gradient(110deg,#e3a5c0,#bcaee2,#e3a5c0)] bg-[length:200%_100%] p-px'
               : ''
+          }
+          // A chosen colour replaces the drifting default gradient with a solid
+          // 1px frame in that colour; the glow is a real blurred box-shadow, not
+          // a thicker border.
+          style={
+            accent
+              ? {
+                  borderRadius: '1rem',
+                  padding: '1px',
+                  background: accent,
+                  boxShadow: glow ? `0 0 20px -2px ${accent}, 0 0 6px -1px ${accent}` : undefined,
+                }
+              : undefined
           }
         >
           <div
@@ -116,6 +133,7 @@ export default function CommentItem({
                 <span
                   title="Posted with a premium NOTE"
                   className="rounded-full border border-lilac-200 bg-lilac-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-lilac-400"
+                  style={accent ? { borderColor: accent, color: accent } : undefined}
                 >
                   Premium
                 </span>

@@ -105,6 +105,8 @@ export default function CatFeed({
       if (!bundle) return 'No cat loaded.';
       const result = await deleteComment(bundle.cat.id, commentId);
       if (!result.ok) return result.error;
+      // The NOTE is refunded server-side; reflect it without a reload.
+      if (result.wallet) setWallet(result.wallet);
       setBundle({ ...bundle, comments: result.comments });
       return null;
     },

@@ -85,6 +85,19 @@ do $do$ begin
     check (bio is null or length(bio) <= 300);
 exception when duplicate_object then null; end $do$;
 
+-- Premium comment styling. Only settable while holding a premium NOTE (see
+-- update_my_profile), but the stored values keep applying afterwards -- the
+-- comments were already paid for.
+alter table public.profiles add column if not exists premium_comment_color text;
+alter table public.profiles add column if not exists premium_comment_glow boolean not null default false;
+
+do $do$ begin
+  -- Constrained to a 6-digit hex literal so the value can be dropped straight
+  -- into a style attribute without becoming an injection vector.
+  alter table public.profiles add constraint profiles_premium_comment_color_hex
+    check (premium_comment_color is null or premium_comment_color ~* '^#[0-9a-f]{6}$');
+exception when duplicate_object then null; end $do$;
+
 -- Display names are unique the way Instagram handles usernames: case
 -- insensitive, so "Sarah" and "sarah" cannot both exist. Partial, because any
 -- number of people may still have no display name at all.
@@ -241,26 +254,35 @@ drop policy if exists "comments: authenticated read" on public.comments;
 create policy "comments: authenticated read" on public.comments
   for select to authenticated using (true);
 
--- The 10-minute window is enforced HERE, in the policy, not just by hiding a
--- button. A direct PostgREST delete of an older comment matches no rows.
+-- There is deliberately no DELETE policy any more. Deleting now refunds a NOTE,
+-- and that refund has to happen in the same transaction as the delete, so
+-- delete_comment() must be the only way through -- a direct PostgREST delete
+-- would remove the comment and silently keep the NOTE spent. The function
+-- re-checks ownership and the 10-minute window itself, so nothing is lost by
+-- dropping the policy.
 drop policy if exists "comments: delete own" on public.comments;
-create policy "comments: delete own" on public.comments
-  for delete to authenticated
-  using (
-    auth.uid() = user_id
-    and created_at > now() - public.comment_edit_window()
-  );
--- Likewise there is no UPDATE policy at all: edits must go through
--- edit_comment(), which re-checks ownership and the window.
+-- Likewise there is no UPDATE policy: edits must go through edit_comment(),
+-- which re-checks ownership and the window.
 -- NOTE: there is deliberately no INSERT policy. Comments must go through
 -- post_comment(), which charges the NOTE in the same transaction.
 
 -- ------------------------------------------------------------ random cat
--- Volatile plpgsql rather than a stable sql function now: serving a cat also
--- counts a view, so this writes.
+-- Volatile plpgsql rather than a stable sql function: serving a cat also counts
+-- a view, so this writes.
+--
+-- SECURITY DEFINER is load-bearing, not decoration. `cats` has RLS enabled with
+-- a SELECT policy and an INSERT policy but NO UPDATE policy, so the view_count
+-- bump below matches zero rows for anon and authenticated callers -- and since
+-- the function returns exactly those updated rows, it handed back nothing and
+-- the feed reported "No cats in the database yet" against a table with 22 cats
+-- in it. Running as the owner is what lets the counter be written. The only
+-- write is +1 to view_count on the single id already chosen, and `cats` is
+-- world-readable anyway, so this grants the caller nothing they lacked.
 create or replace function public.random_cat(exclude_ids uuid[] default '{}')
 returns setof public.cats
 language plpgsql
+security definer
+set search_path = public
 as $fn$
 declare
   v_id uuid;
@@ -292,6 +314,8 @@ $fn$;
 create or replace function public.random_commented_cat(exclude_ids uuid[] default '{}')
 returns setof public.cats
 language plpgsql
+security definer
+set search_path = public
 as $fn$
 declare
   v_id uuid;
@@ -366,6 +390,8 @@ returns table (
   author_id           uuid,
   display_name        text,
   profile_picture_url text,
+  premium_comment_color text,
+  premium_comment_glow  boolean,
   is_mine             boolean,
   editable_until      timestamptz
 )
@@ -383,6 +409,10 @@ as $fn$
          p.id,
          p.display_name,
          p.profile_picture_url,
+         -- Styling only travels with comments that actually cost a premium
+         -- NOTE, so a custom colour cannot leak onto ordinary ones.
+         case when c.used_premium_note then p.premium_comment_color end,
+         case when c.used_premium_note then coalesce(p.premium_comment_glow, false) else false end,
          -- Ownership as a bare boolean: the UI needs to know whether to offer
          -- edit/delete without ever learning whose user_id owns a comment.
          c.user_id = auth.uid(),
@@ -466,10 +496,17 @@ grant execute on function public.profile_rating_summary(uuid) to anon, authentic
 -- Display name / bio / avatar go through a function so the same trimming and
 -- length rules apply no matter what the client sends. Neither wallet balance
 -- nor either spend counter is reachable from here.
-create or replace function public.update_my_profile(
-  p_display_name        text,
-  p_bio                 text,
-  p_profile_picture_url text
+--
+-- Signature gains the two styling fields, so the old three-argument version has
+-- to be dropped rather than replaced.
+drop function if exists public.update_my_profile(text, text, text);
+
+create function public.update_my_profile(
+  p_display_name          text,
+  p_bio                   text,
+  p_profile_picture_url   text,
+  p_premium_comment_color text default null,
+  p_premium_comment_glow  boolean default false
 )
 returns public.profiles
 language plpgsql
@@ -478,9 +515,29 @@ set search_path = public
 as $fn$
 declare
   v_profile public.profiles;
+  v_glow    boolean := coalesce(p_premium_comment_glow, false);
+  v_color   text    := nullif(btrim(coalesce(p_premium_comment_color, '')), '');
 begin
   if auth.uid() is null then
     raise exception 'You must be signed in.' using errcode = '42501';
+  end if;
+
+  select * into v_profile from public.profiles where user_id = auth.uid() for update;
+
+  if not found then
+    raise exception 'No profile found for this account.' using errcode = 'P0002';
+  end if;
+
+  -- The real gate. The UI hides this section without premium NOTES, but hiding
+  -- a control is not a permission check: a hand-rolled RPC call would otherwise
+  -- set a custom style having never bought anything.
+  if v_profile.premium_notes_balance < 1 and (v_color is not null or v_glow) then
+    raise exception 'Premium comment styling needs at least 1 premium NOTE.'
+      using errcode = 'P0001';
+  end if;
+
+  if v_color is not null and v_color !~* '^#[0-9a-f]{6}$' then
+    raise exception 'Pick a colour in #rrggbb form.' using errcode = '22023';
   end if;
 
   begin
@@ -490,7 +547,18 @@ begin
         profile_picture_url = coalesce(
                                 nullif(btrim(coalesce(p_profile_picture_url, '')), ''),
                                 profile_picture_url
-                              )
+                              ),
+        -- Styling is only rewritten while they hold a premium NOTE. Otherwise
+        -- it is left exactly as it was, so running out of NOTES never silently
+        -- wipes a style they already chose.
+        premium_comment_color = case
+                                  when premium_notes_balance >= 1 then v_color
+                                  else premium_comment_color
+                                end,
+        premium_comment_glow  = case
+                                  when premium_notes_balance >= 1 then v_glow
+                                  else premium_comment_glow
+                                end
     where user_id = auth.uid()
     returning * into v_profile;
   exception when unique_violation then
@@ -500,15 +568,11 @@ begin
     raise exception 'That name is already taken.' using errcode = '23505';
   end;
 
-  if not found then
-    raise exception 'No profile found for this account.' using errcode = 'P0002';
-  end if;
-
   return v_profile;
 end;
 $fn$;
 
-grant execute on function public.update_my_profile(text, text, text) to authenticated;
+grant execute on function public.update_my_profile(text, text, text, text, boolean) to authenticated;
 
 -- ------------------------------------------------------- the daily wallet
 -- Tops the daily allowance back up to 3 if a full 24h has passed. Written as a
@@ -722,9 +786,9 @@ $fn$;
 
 grant execute on function public.edit_comment(uuid, text) to authenticated;
 
--- The delete policy above already enforces ownership and the window; this
--- wrapper exists so the UI can tell "too late" apart from "never existed"
--- instead of reporting a silent zero-row delete as success.
+-- Deleting inside the window refunds the NOTE to whichever wallet paid for it,
+-- and unwinds the matching lifetime counter, in the same transaction as the
+-- delete so a wallet can never drift from the comments that spent it.
 create or replace function public.delete_comment(p_comment_id uuid)
 returns void
 language plpgsql
@@ -733,6 +797,7 @@ set search_path = public
 as $fn$
 declare
   v_comment public.comments;
+  v_profile public.profiles;
 begin
   if auth.uid() is null then
     raise exception 'You must be signed in.' using errcode = '42501';
@@ -750,6 +815,32 @@ begin
 
   if v_comment.created_at <= now() - public.comment_edit_window() then
     raise exception 'The edit window for this comment has closed.' using errcode = 'P0001';
+  end if;
+
+  -- Lock the wallet before touching it, exactly as post_comment() does, so a
+  -- refund and a concurrent spend cannot interleave.
+  select * into v_profile
+  from public.profiles
+  where user_id = auth.uid()
+  for update;
+
+  if not found then
+    raise exception 'No profile found for this account.' using errcode = 'P0002';
+  end if;
+
+  -- used_premium_note records which wallet was charged, so the refund always
+  -- goes back where the NOTE came from. greatest(..., 0) keeps the spent
+  -- counters inside their non-negative constraints even if a row predates them.
+  if v_comment.used_premium_note then
+    update public.profiles
+    set premium_notes_balance = premium_notes_balance + 1,
+        premium_notes_spent   = greatest(premium_notes_spent - 1, 0)
+    where id = v_profile.id;
+  else
+    update public.profiles
+    set daily_notes_balance = daily_notes_balance + 1,
+        daily_notes_spent   = greatest(daily_notes_spent - 1, 0)
+    where id = v_profile.id;
   end if;
 
   delete from public.comments where id = p_comment_id;

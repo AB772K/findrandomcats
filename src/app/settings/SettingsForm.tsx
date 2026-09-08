@@ -1,16 +1,21 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import Avatar from '@/components/Avatar';
 import { saveProfile } from '@/lib/actions';
-import type { MyProfile } from '@/lib/types';
+import { DEFAULT_PREMIUM_COLOR, type MyProfile } from '@/lib/types';
 
 export default function SettingsForm({ profile }: { profile: MyProfile | null }) {
   const router = useRouter();
   const [name, setName] = useState(profile?.display_name ?? '');
   const [bio, setBio] = useState(profile?.bio ?? '');
   const [preview, setPreview] = useState<string | null>(null);
+  const [color, setColor] = useState(profile?.premium_comment_color ?? DEFAULT_PREMIUM_COLOR);
+  const [glow, setGlow] = useState(profile?.premium_comment_glow ?? false);
+  // Gate on the CURRENT balance, matching what update_my_profile() enforces.
+  const canStyle = (profile?.premium_notes_balance ?? 0) >= 1;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
@@ -116,6 +121,71 @@ export default function SettingsForm({ profile }: { profile: MyProfile | null })
         />
         <span className="block text-right text-[11px] text-ink/40">{bio.length}/300</span>
       </label>
+
+      <fieldset className="space-y-3 border-t border-blush-100 pt-5">
+        <legend className="sr-only">Premium comment style</legend>
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 className="font-display text-sm font-semibold text-ink/75">
+            Premium comment style
+          </h2>
+          <span className="chip">{canStyle ? 'Unlocked' : 'Needs a premium NOTE'}</span>
+        </div>
+
+        {canStyle ? (
+          <>
+            <p className="text-xs text-ink/50">
+              Applies to comments you post with a premium NOTE.
+            </p>
+
+            <div className="flex flex-wrap items-center gap-4">
+              <label className="flex items-center gap-2 text-xs font-medium text-ink/55">
+                <input
+                  name="premium_comment_color"
+                  type="color"
+                  value={color}
+                  onChange={(event) => setColor(event.target.value)}
+                  className="h-9 w-14 cursor-pointer rounded-lg border border-lilac-200 bg-paper p-1"
+                />
+                Accent colour
+              </label>
+
+              <label className="flex cursor-pointer items-center gap-2 text-xs font-medium text-ink/55">
+                <input
+                  name="premium_comment_glow"
+                  type="checkbox"
+                  checked={glow}
+                  onChange={(event) => setGlow(event.target.checked)}
+                  className="h-4 w-4 cursor-pointer accent-blush-400"
+                />
+                Neon glow
+              </label>
+            </div>
+
+            {/* Same treatment CommentItem applies, so what they pick is what
+                they will actually see on a comment. */}
+            <div
+              className="rounded-2xl rounded-tl-md border bg-paper px-4 py-2.5"
+              style={{
+                borderColor: color,
+                boxShadow: glow ? `0 0 0 1px ${color}, 0 0 18px -2px ${color}` : undefined,
+              }}
+            >
+              <span className="font-display text-sm font-semibold text-ink">
+                {name.trim() || 'Cat lover'}
+              </span>
+              <p className="mt-0.5 text-sm text-ink/80">This is how your premium comments look.</p>
+            </div>
+          </>
+        ) : (
+          <p className="rounded-2xl border border-blush-100 bg-blush-50/60 px-4 py-3 text-xs text-ink/55">
+            Buy a premium NOTE to unlock a custom colour and glow for your comments.{' '}
+            <Link href="/notes" className="underline transition hover:text-ink">
+              Get premium NOTES
+            </Link>
+            .
+          </p>
+        )}
+      </fieldset>
 
       <button type="submit" disabled={busy} className="btn-primary w-full">
         {busy ? 'Saving…' : 'Save profile'}

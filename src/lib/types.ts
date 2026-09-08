@@ -24,6 +24,8 @@ export type Profile = {
   display_name: string | null;
   profile_picture_url: string | null;
   bio: string | null;
+  premium_comment_color: string | null;
+  premium_comment_glow: boolean;
   created_at: string;
 };
 
@@ -61,7 +63,17 @@ export type MyProfile = {
   display_name: string | null;
   profile_picture_url: string | null;
   bio: string | null;
+  premium_comment_color: string | null;
+  premium_comment_glow: boolean;
+  /**
+   * Current premium balance, not lifetime spend: styling is gated on holding a
+   * premium NOTE right now, and the server function checks the same thing.
+   */
+  premium_notes_balance: number;
 };
+
+/** Used when a premium commenter has not picked a colour. */
+export const DEFAULT_PREMIUM_COLOR = '#e3a5c0';
 
 /** One row per star value that actually received at least one rating. */
 export type RatingTally = {
@@ -85,6 +97,9 @@ export type CommentRow = {
   author_id: string | null;
   display_name: string | null;
   profile_picture_url: string | null;
+  /** The author's chosen accent. Null on non-premium comments and unset styles. */
+  premium_comment_color: string | null;
+  premium_comment_glow: boolean;
   /** True only for the signed-in reader's own comments. */
   is_mine: boolean;
   /** ISO timestamp after which this comment can no longer be edited or removed. */

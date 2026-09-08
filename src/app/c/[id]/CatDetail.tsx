@@ -61,6 +61,8 @@ export default function CatDetail({
     async (commentId: string) => {
       const result = await deleteComment(bundle.cat.id, commentId);
       if (!result.ok) return result.error;
+      // The NOTE is refunded server-side; reflect it without a reload.
+      if (result.wallet) setWallet(result.wallet);
       setBundle((prev) => ({ ...prev, comments: result.comments }));
       return null;
     },
