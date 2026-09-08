@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import Avatar from '@/components/Avatar';
+import TitleBadge from '@/components/TitleBadge';
 import { displayNameOf } from '@/lib/avatar';
 import { premiumFontClass } from '@/app/fonts/premium';
 import { REACTIONS, type CommentRow, type ReactionKind, type ReactionState } from '@/lib/types';
@@ -188,14 +189,19 @@ export default function CommentItem({
               ) : (
                 <span className="font-display text-sm font-semibold text-ink/60">{name}</span>
               )}
-              {premium ? (
-                <span
-                  title="Posted with a premium NOTE"
-                  className="rounded-full border border-lilac-200 bg-lilac-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-lilac-400"
-                  style={accent ? { borderColor: accent, color: accent } : undefined}
-                >
+              {/* An earned title rides on every comment its holder writes;
+                  the Premium mark only appears on comments a premium NOTE
+                  actually paid for. Filled vs outlined so both can sit here
+                  together without competing. */}
+              {comment.display_title ? (
+                <TitleBadge title={`Earned title: ${comment.display_title}`}>
+                  {comment.display_title}
+                </TitleBadge>
+              ) : null}
+              {comment.shows_premium_title ? (
+                <TitleBadge kind="premium" accent={accent}>
                   Premium
-                </span>
+                </TitleBadge>
               ) : null}
             </div>
 

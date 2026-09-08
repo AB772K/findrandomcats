@@ -17,6 +17,7 @@ import type {
   LeaderboardScope,
   NoteKind,
   NotesWallet,
+  ProfileTitle,
   ReactionKind,
   ReactionState,
   RatingTally,
@@ -456,7 +457,7 @@ export async function getMyProfile(): Promise<MyProfile | null> {
   const { data } = await supabase
     .from('profiles')
     .select(
-      'display_name, profile_picture_url, bio, premium_comment_color, premium_comment_glow, premium_comment_font, premium_notes_balance',
+      'display_name, profile_picture_url, bio, premium_comment_color, premium_comment_glow, premium_comment_font, premium_display_title, premium_notes_balance',
     )
     .eq('user_id', user.id)
     .maybeSingle();
@@ -468,6 +469,7 @@ export async function getMyProfile(): Promise<MyProfile | null> {
     premium_comment_color: (data?.premium_comment_color as string | null) ?? null,
     premium_comment_glow: Boolean(data?.premium_comment_glow),
     premium_comment_font: (data?.premium_comment_font as string | null) ?? null,
+    premium_display_title: (data?.premium_display_title as string | null) ?? null,
     // Styling is gated on the CURRENT balance, so read it here rather than
     // inferring anything from lifetime spend.
     premium_notes_balance: (data?.premium_notes_balance as number | null) ?? 0,
@@ -561,6 +563,45 @@ export async function saveProfile(formData: FormData): Promise<SaveProfileResult
   revalidatePath('/settings');
   revalidatePath('/', 'layout');
   return { ok: true };
+}
+
+/* ------------------------------------------------------------------ titles */
+
+/** The titles a profile has earned. Public -- used on /u/[id] and /settings. */
+export async function fetchProfileTitles(profileId: string): Promise<ProfileTitle[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc('profile_titles', { p_profile_id: profileId });
+  if (error) return [];
+  return (data ?? []) as ProfileTitle[];
+}
+
+export type SetTitleResult = { ok: true; title: string | null } | { ok: false; error: string };
+
+/**
+ * Picks which earned title to display. set_display_title() re-checks the badge
+ * against profile_badges, so the picker listing only what you hold is
+ * presentation rather than the permission boundary.
+ */
+export async function setDisplayTitle(title: string | null): Promise<SetTitleResult> {
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: 'Sign in first.' };
+
+  const { data, error } = await supabase.rpc('set_display_title', { p_title: title });
+  if (error) {
+    return {
+      ok: false,
+      error: /not earned/i.test(error.message)
+        ? 'You have not earned that title.'
+        : error.message,
+    };
+  }
+
+  revalidatePath('/settings');
+  revalidatePath('/', 'layout');
+  return { ok: true, title: (data as string | null) ?? null };
 }
 
 /* --------------------------------------------------------------- purchases */

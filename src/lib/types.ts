@@ -57,6 +57,7 @@ export type PublicProfile = {
   daily_notes_spent: number;
   premium_notes_spent: number;
   rating_count: number;
+  display_title: string | null;
 };
 
 /** Lifetime reactions a profile has RECEIVED, from profile_reaction_totals(). */
@@ -75,11 +76,31 @@ export type MyProfile = {
   premium_comment_color: string | null;
   premium_comment_glow: boolean;
   premium_comment_font: string | null;
+  /** The achievement title currently on display, or null. */
+  premium_display_title: string | null;
   /**
    * Current premium balance, not lifetime spend: styling is gated on holding a
    * premium NOTE right now, and the server function checks the same thing.
    */
   premium_notes_balance: number;
+};
+
+/** One title a profile has earned, from profile_titles(). */
+export type ProfileTitle = {
+  category: LeaderboardMetric;
+  /** Percentile band: 1 is the top 1% and the rarest. */
+  tier: 1 | 2 | 3;
+  title: string;
+  /** Human name for the category, e.g. "Hearts". */
+  label: string;
+  awarded_at: string;
+};
+
+/** What each tier is called, for the picker and the profile page. */
+export const TIER_LABELS: Record<number, string> = {
+  1: 'Top 1%',
+  2: 'Top 2%',
+  3: 'Top 3%',
 };
 
 /** Used when a premium commenter has not picked a colour. */
@@ -145,6 +166,10 @@ export type CommentRow = {
   premium_comment_color: string | null;
   premium_comment_glow: boolean;
   premium_comment_font: string | null;
+  /** The author's selected achievement title, on every comment they write. */
+  display_title: string | null;
+  /** True when this comment was paid for with a premium NOTE. */
+  shows_premium_title: boolean;
   like_count: number;
   funny_count: number;
   love_count: number;

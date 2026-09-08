@@ -2,10 +2,19 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import Avatar from '@/components/Avatar';
 import DeleteCatButton from '@/components/DeleteCatButton';
+import TitleBadge from '@/components/TitleBadge';
 import SuccessToast from '@/components/SuccessToast';
 import { displayNameOf } from '@/lib/avatar';
 import { createClient } from '@/lib/supabase/server';
-import { REACTIONS, type Cat, type PublicProfile, type RatingTally, type ReactionTotals } from '@/lib/types';
+import {
+  REACTIONS,
+  TIER_LABELS,
+  type Cat,
+  type ProfileTitle,
+  type PublicProfile,
+  type RatingTally,
+  type ReactionTotals,
+} from '@/lib/types';
 
 // Profiles change whenever someone comments, so render per request.
 export const dynamic = 'force-dynamic';
@@ -46,7 +55,8 @@ export default async function PublicProfilePage({
   // Uploads are the exception: `cats` is world-readable by policy, so the grid
   // needs no aggregate wrapper -- and uploaded_by already holds a profiles.id,
   // never a user_id.
-  const [profileResult, ratingsResult, uploadsResult, reactionsResult, viewer] = await Promise.all([
+  const [profileResult, ratingsResult, uploadsResult, reactionsResult, viewer, titlesResult] =
+    await Promise.all([
     supabase.rpc('public_profile', { p_profile_id: params.id }),
     supabase.rpc('profile_rating_summary', { p_profile_id: params.id }),
     supabase
@@ -59,6 +69,7 @@ export default async function PublicProfilePage({
     // Aggregate totals only -- never which comment earned what.
     supabase.rpc('profile_reaction_totals', { p_profile_id: params.id }),
     supabase.auth.getUser(),
+    supabase.rpc('profile_titles', { p_profile_id: params.id }),
   ]);
 
   const profile = (profileResult.data as PublicProfile[] | null)?.[0];
@@ -74,6 +85,7 @@ export default async function PublicProfilePage({
       : null;
 
   const uploads = (uploadsResult.data ?? []) as Cat[];
+  const titles = (titlesResult.data ?? []) as ProfileTitle[];
   const name = displayNameOf(profile.display_name);
 
   const totals = ((reactionsResult.data as ReactionTotals[] | null)?.[0] ?? {
@@ -119,7 +131,14 @@ export default async function PublicProfilePage({
             size="lg"
           />
           <div className="min-w-0 space-y-1">
-            <h1 className="font-display text-2xl font-bold tracking-tight">{name}</h1>
+            <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-start">
+              <h1 className="font-display text-2xl font-bold tracking-tight">{name}</h1>
+              {profile.display_title ? (
+                <TitleBadge title={`Earned title: ${profile.display_title}`}>
+                  {profile.display_title}
+                </TitleBadge>
+              ) : null}
+            </div>
             <p className="text-xs text-ink/45">
               Finding cats since{' '}
               {new Date(profile.created_at).toLocaleDateString(undefined, {
@@ -137,6 +156,33 @@ export default async function PublicProfilePage({
           </div>
         </div>
       </section>
+
+      {titles.length > 0 ? (
+        <section className="card p-5">
+          <div className="mb-3 flex items-baseline justify-between gap-3">
+            <h2 className="font-display text-base font-semibold">Titles earned</h2>
+            <span className="text-xs text-ink/45">
+              {titles.length} of 4 categories
+            </span>
+          </div>
+          <ul className="flex flex-wrap gap-2">
+            {titles.map((t) => (
+              <li
+                key={`${t.category}-${t.tier}`}
+                className="flex items-center gap-2 rounded-full border border-blush-100 bg-blush-50/60 px-3 py-1.5"
+              >
+                <span className="font-display text-sm font-semibold text-ink">{t.title}</span>
+                <span className="text-[11px] text-ink/50">
+                  {t.label} · {TIER_LABELS[t.tier]}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 text-[11px] text-ink/40">
+            Recalculated monthly from all-time reactions received.
+          </p>
+        </section>
+      ) : null}
 
       <section className="card p-5">
         <h2 className="mb-3 font-display text-base font-semibold">Reactions received</h2>

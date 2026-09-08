@@ -446,6 +446,8 @@ returns table (
   premium_comment_color text,
   premium_comment_glow  boolean,
   premium_comment_font  text,
+  display_title         text,
+  shows_premium_title   boolean,
   is_mine               boolean,
   editable_until        timestamptz,
   like_count            bigint,
@@ -473,6 +475,14 @@ as $fn$
          case when c.used_premium_note then p.premium_comment_color end,
          case when c.used_premium_note then coalesce(p.premium_comment_glow, false) else false end,
          case when c.used_premium_note then p.premium_comment_font end,
+         -- An achievement title, once selected, rides on every comment the
+         -- author writes -- daily or premium. It was earned, not bought.
+         p.premium_display_title,
+         -- The Premium mark is different: it is not an achievement and is not
+         -- selectable. It appears exactly when a comment was paid for with a
+         -- premium NOTE, so it says something about this comment rather than
+         -- about the person.
+         c.used_premium_note,
          -- Ownership as a bare boolean: the UI needs to know whether to offer
          -- edit/delete without ever learning whose user_id owns a comment.
          c.user_id = auth.uid(),
@@ -596,7 +606,8 @@ returns table (
   comment_count       bigint,
   daily_notes_spent   integer,
   premium_notes_spent integer,
-  rating_count        bigint
+  rating_count        bigint,
+  display_title       text
 )
 language sql
 stable
@@ -611,7 +622,8 @@ as $fn$
          (select count(*) from public.comments c where c.user_id = p.user_id),
          p.daily_notes_spent,
          p.premium_notes_spent,
-         (select count(*) from public.ratings r where r.user_id = p.user_id)
+         (select count(*) from public.ratings r where r.user_id = p.user_id),
+         p.premium_display_title
   from public.profiles p
   where p.id = p_profile_id;
 $fn$;
@@ -1061,6 +1073,52 @@ as $fn$
 $fn$;
 
 grant execute on function public.profile_titles(uuid) to anon, authenticated;
+
+-- --------------------------------------------------- choose your title
+-- Only a badge you currently hold may be displayed. The picker on /settings
+-- lists exactly those, but listing is not permission: this re-checks against
+-- profile_badges, so a hand-rolled RPC call cannot pin "Rizzler" to a profile
+-- that never earned it.
+--
+-- Passing null clears the title, which always succeeds -- taking your own title
+-- down needs no entitlement.
+create or replace function public.set_display_title(p_title text)
+returns text
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+declare
+  v_profile public.profiles;
+  v_title   text := nullif(btrim(coalesce(p_title, '')), '');
+begin
+  if auth.uid() is null then
+    raise exception 'You must be signed in.' using errcode = '42501';
+  end if;
+
+  select * into v_profile from public.profiles where user_id = auth.uid();
+  if not found then
+    raise exception 'No profile found for this account.' using errcode = 'P0002';
+  end if;
+
+  if v_title is not null and not exists (
+    select 1
+    from public.profile_badges b
+    join public.badge_titles t on t.category = b.category and t.tier = b.tier
+    where b.profile_id = v_profile.id and t.title = v_title
+  ) then
+    raise exception 'You have not earned that title.' using errcode = '42501';
+  end if;
+
+  update public.profiles
+  set premium_display_title = v_title
+  where id = v_profile.id;
+
+  return v_title;
+end;
+$fn$;
+
+grant execute on function public.set_display_title(text) to authenticated;
 
 -- ------------------------------------------------------ scheduling it
 -- pg_cron is available on this project, so the payout runs itself. If the
