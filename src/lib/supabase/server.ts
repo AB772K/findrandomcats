@@ -2,6 +2,7 @@ import { cookies } from 'next/headers';
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from '@/lib/env';
+import { sanitizeAuthCookies } from '@/lib/supabase/cookies';
 
 type CookiesToSet = { name: string; value: string; options: CookieOptions }[];
 
@@ -27,7 +28,9 @@ export function createClient() {
   return createServerClient(SUPABASE_URL(), SUPABASE_ANON_KEY(), {
     cookies: {
       getAll() {
-        return cookieStore.getAll();
+        // Never hand the client an auth cookie it cannot decode: it throws
+        // rather than reporting a missing session. See sanitizeAuthCookies.
+        return sanitizeAuthCookies(cookieStore.getAll()).cookies;
       },
       setAll(cookiesToSet: CookiesToSet) {
         try {
@@ -40,4 +43,25 @@ export function createClient() {
       },
     },
   });
+}
+
+/**
+ * The signed-in user, or null.
+ *
+ * getUser() does not merely return a null user when the auth cookie is
+ * unreadable -- it throws out of the base64url decoder. Uncaught, that escapes
+ * whatever Server Component asked, and a single malformed cookie turns into a
+ * 500 on every page rather than a signed-out visitor. The middleware clears
+ * such a cookie, but every entry point that reads a user gets the same
+ * guarantee here so nothing depends on the middleware having run first.
+ */
+export async function getSessionUser() {
+  try {
+    const {
+      data: { user },
+    } = await createClient().auth.getUser();
+    return user;
+  } catch {
+    return null;
+  }
 }

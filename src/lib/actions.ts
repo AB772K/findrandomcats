@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSessionUser } from '@/lib/supabase/server';
 import { NO_CAT_MESSAGE, UNAVAILABLE_MESSAGE, detectCat } from '@/lib/cat-detector';
 import { findNotePackage } from '@/lib/notes';
 import { isPremiumFontKey } from '@/app/fonts/premium';
@@ -27,9 +27,7 @@ import type {
 
 async function loadBundle(cat: Cat): Promise<CatBundle> {
   const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSessionUser();
 
   const [summary, mine, comments] = await Promise.all([
     supabase.rpc('cat_rating_summary', { p_cat_id: cat.id }),
@@ -109,9 +107,7 @@ export async function rateCat(catId: string, stars: number): Promise<CatBundle> 
   }
 
   const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (!user) throw new Error('Sign in to rate cats.');
 
   const { error } = await supabase
@@ -155,9 +151,7 @@ export async function postComment(
   if (isProfane(trimmed)) return { ok: false, error: PROFANITY_MESSAGE };
 
   const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (!user) return { ok: false, error: 'Sign in to comment.' };
 
   const { error } = await supabase.rpc('post_comment', {
@@ -250,12 +244,15 @@ const EMPTY_WALLET: NotesWallet = {
 /**
  * The signed-in user's own wallet. my_notes() applies any owed 24h top-up as a
  * side effect, so simply viewing a page is enough to refill the daily notes.
+ *
+ * null means "unknown", NOT "empty" -- nobody signed in, or the call did not
+ * come back. Callers must not render it as a zero balance: doing that told a
+ * user holding 25 premium notes that they were out of NOTES, and disabled the
+ * comment box, because one failed request looked exactly like an empty wallet.
  */
 export async function getNotesWallet(): Promise<NotesWallet | null> {
   const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (!user) return null;
 
   const { data, error } = await supabase.rpc('my_notes');
@@ -268,9 +265,7 @@ export async function getNotesWallet(): Promise<NotesWallet | null> {
 
 export async function uploadCat(formData: FormData): Promise<{ error: string } | never> {
   const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (!user) return { error: 'Sign in to upload a cat.' };
 
   const file = formData.get('image');
@@ -340,9 +335,7 @@ export async function reactToComment(
   reaction: ReactionKind,
 ): Promise<ReactionResult> {
   const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (!user) return { ok: false, error: 'Sign in to react.' };
 
   const { data, error } = await supabase.rpc('set_comment_reaction', {
@@ -390,9 +383,7 @@ function storagePathFromPublicUrl(url: string, bucket: string): string | null {
 
 export async function deleteCat(catId: string): Promise<DeleteCatResult> {
   const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (!user) return { ok: false, error: 'Sign in first.' };
 
   // Read the image details BEFORE the row goes away -- afterwards there is
@@ -449,9 +440,7 @@ export type SaveProfileResult =
 /** The signed-in user's own editable fields, for the settings form. */
 export async function getMyProfile(): Promise<MyProfile | null> {
   const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (!user) return null;
 
   const { data } = await supabase
@@ -482,9 +471,7 @@ export async function getMyProfile(): Promise<MyProfile | null> {
  */
 export async function saveProfile(formData: FormData): Promise<SaveProfileResult> {
   const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (!user) return { ok: false, error: 'Sign in to edit your profile.' };
 
   const displayName = String(formData.get('display_name') ?? '').trim();
@@ -584,9 +571,7 @@ export type SetTitleResult = { ok: true; title: string | null } | { ok: false; e
  */
 export async function setDisplayTitle(title: string | null): Promise<SetTitleResult> {
   const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (!user) return { ok: false, error: 'Sign in first.' };
 
   const { data, error } = await supabase.rpc('set_display_title', { p_title: title });
@@ -622,9 +607,7 @@ export async function startCheckout(packageId: string): Promise<{ error: string 
   if (!pkg) return { error: 'That package does not exist.' };
 
   const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (!user) return { error: 'Sign in to buy premium NOTES.' };
 
   return {

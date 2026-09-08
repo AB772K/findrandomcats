@@ -5,7 +5,7 @@ import DeleteCatButton from '@/components/DeleteCatButton';
 import TitleBadge from '@/components/TitleBadge';
 import SuccessToast from '@/components/SuccessToast';
 import { displayNameOf } from '@/lib/avatar';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSessionUser } from '@/lib/supabase/server';
 import {
   REACTIONS,
   TIER_LABELS,
@@ -68,7 +68,7 @@ export default async function PublicProfilePage({
       .limit(60),
     // Aggregate totals only -- never which comment earned what.
     supabase.rpc('profile_reaction_totals', { p_profile_id: params.id }),
-    supabase.auth.getUser(),
+    getSessionUser().then((user) => ({ data: { user } })),
     supabase.rpc('profile_titles', { p_profile_id: params.id }),
   ]);
 

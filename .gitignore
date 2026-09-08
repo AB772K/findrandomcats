@@ -15,3 +15,6 @@ next-env.d.ts
 # Local scratch scripts (schema apply / verification helpers)
 tmp-*.mjs
 tmp-*.cjs
+
+# Scratch work for live verification -- never part of the app.
+.tmpwork/

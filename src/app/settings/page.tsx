@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation';
 import SettingsForm from '@/app/settings/SettingsForm';
 import TitlePicker from '@/app/settings/TitlePicker';
 import { fetchProfileTitles, getMyProfile } from '@/lib/actions';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSessionUser } from '@/lib/supabase/server';
 
 export const metadata = { title: 'Your profile · FindRandomCats' };
 
@@ -13,9 +13,7 @@ export default async function SettingsPage() {
   }
 
   const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (!user) redirect('/login');
 
   const [profile, { data: row }] = await Promise.all([

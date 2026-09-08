@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
+import { sanitizeAuthCookies } from '@/lib/supabase/cookies';
 
 type CookiesToSet = { name: string; value: string; options: CookieOptions }[];
 
@@ -23,10 +24,18 @@ export async function middleware(request: NextRequest) {
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) return response;
 
+  // An auth cookie the client cannot decode does not read as "no session" -- it
+  // throws, and the throw escapes into the root layout and 500s the page. Drop
+  // it before the client ever sees it, and expire it below so the browser stops
+  // resending it; otherwise every reload fails identically and forever.
+  const { cookies: safeCookies, dropped } = sanitizeAuthCookies(request.cookies.getAll());
+  for (const name of dropped) request.cookies.delete(name);
+  if (dropped.length > 0) response = NextResponse.next({ request });
+
   const supabase = createServerClient(url, key, {
     cookies: {
       getAll() {
-        return request.cookies.getAll();
+        return safeCookies;
       },
       setAll(cookiesToSet: CookiesToSet) {
         // Make the refreshed cookies visible to this request's own render...
@@ -42,12 +51,22 @@ export async function middleware(request: NextRequest) {
     },
   });
 
-  // Do not drop this call: it is what performs the refresh.
-  await supabase.auth.getUser();
+  // Do not drop this call: it is what performs the refresh. The catch is a
+  // backstop only -- sanitizing above is what actually prevents the throw,
+  // including the one raised from an unawaited background refresh that no
+  // try/catch here could reach.
+  try {
+    await supabase.auth.getUser();
+  } catch {
+    /* Treated as signed out; the bad cookie is already being expired. */
+  }
+
+  // Expire the debris last, so a refresh written above is never overwritten.
+  for (const name of dropped) response.cookies.delete(name);
 
   return response;
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\.(?:svg|png|jpg|jpeg|gif|webp)$).*)'],
 };

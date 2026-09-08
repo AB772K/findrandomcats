@@ -1,5 +1,5 @@
 import AuthForm from '@/app/login/AuthForm';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSessionUser } from '@/lib/supabase/server';
 import { redirect } from 'next/navigation';
 
 export const metadata = { title: 'Sign in · FindRandomCats' };
@@ -7,9 +7,7 @@ export const metadata = { title: 'Sign in · FindRandomCats' };
 export default async function LoginPage() {
   if (process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
     const supabase = createClient();
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const user = await getSessionUser();
     if (user) redirect('/');
   }
 

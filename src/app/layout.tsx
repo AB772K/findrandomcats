@@ -4,7 +4,7 @@ import './globals.css';
 import AdblockNotice from '@/components/AdblockNotice';
 import Nav from '@/components/Nav';
 import { getNotesWallet } from '@/lib/actions';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSessionUser } from '@/lib/supabase/server';
 
 /**
  * Fonts are committed to the repo and loaded with next/font/local rather than
@@ -45,9 +45,7 @@ async function currentUser() {
   }
 
   const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (!user) return { email: null, wallet: null, profile: null };
 
   const [{ data }, wallet] = await Promise.all([

@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import CheckoutForm from '@/app/checkout/CheckoutForm';
 import { findNotePackage } from '@/lib/notes';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSessionUser } from '@/lib/supabase/server';
 
 export const metadata = { title: 'Checkout · FindRandomCats' };
 
@@ -26,9 +26,7 @@ export default async function CheckoutPage({
   }
 
   const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (!user) redirect('/login');
 
   // The package is looked up server-side by id -- the price never comes from

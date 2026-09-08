@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import CatFeed from '@/components/CatFeed';
 import { getNotesWallet } from '@/lib/actions';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSessionUser } from '@/lib/supabase/server';
 
 export default async function HomePage() {
   const configured =
@@ -23,9 +23,7 @@ export default async function HomePage() {
   }
 
   const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSessionUser();
 
   // getNotesWallet() also applies any owed 24h top-up, so landing on the home
   // page is enough to refill the daily notes.

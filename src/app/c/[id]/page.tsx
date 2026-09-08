@@ -5,7 +5,7 @@ import CatImage from '@/components/CatImage';
 import DeleteCatButton from '@/components/DeleteCatButton';
 import RatingBreakdown from '@/components/RatingBreakdown';
 import { fetchCat, getNotesWallet } from '@/lib/actions';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSessionUser } from '@/lib/supabase/server';
 
 // View counts and comments move constantly.
 export const dynamic = 'force-dynamic';
@@ -23,9 +23,7 @@ export default async function CatPage({ params }: { params: { id: string } }) {
   }
 
   const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSessionUser();
 
   const bundle = await fetchCat(params.id);
   if (!bundle) notFound();

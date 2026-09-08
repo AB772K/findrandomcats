@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import UploadForm from '@/app/upload/UploadForm';
 import SuccessToast from '@/components/SuccessToast';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSessionUser } from '@/lib/supabase/server';
 
 export const metadata = { title: 'Upload a cat · FindRandomCats' };
 
@@ -16,9 +16,7 @@ export default async function UploadPage({
   }
 
   const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (!user) redirect('/login');
 
   return (

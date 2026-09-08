@@ -4,7 +4,7 @@ import DailyResetCountdown from '@/app/notes/DailyResetCountdown';
 import VideoAdSlot from '@/components/VideoAdSlot';
 import { getNotesWallet } from '@/lib/actions';
 import { NOTE_PACKAGES } from '@/lib/notes';
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSessionUser } from '@/lib/supabase/server';
 import { DAILY_NOTES_ALLOWANCE } from '@/lib/types';
 
 export const metadata = { title: 'Your NOTES · FindRandomCats' };
@@ -18,9 +18,7 @@ export default async function NotesPage() {
   }
 
   const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getSessionUser();
   if (!user) redirect('/login');
 
   // Reading the wallet is what applies an owed 24h top-up.

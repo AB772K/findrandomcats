@@ -52,6 +52,10 @@ export default function CommentBox({
     });
   }
 
+  // A null wallet means the balance is unknown -- not that it is empty. Reading
+  // it as zero is what made a signed-in user with notes see "You are out of
+  // NOTES." whenever my_notes() failed to come back.
+  const walletKnown = wallet !== null;
   const daily = wallet?.daily_notes_balance ?? 0;
   const premium = wallet?.premium_notes_balance ?? 0;
 
@@ -70,7 +74,10 @@ export default function CommentBox({
     });
   }, [daily, premium]);
 
-  const broke = daily < 1 && premium < 1;
+  // Only block on a balance we actually know. When we do not, let them try:
+  // post_comment() charges the note and is the real enforcement anyway, so the
+  // worst case is an honest error message instead of a box disabled by mistake.
+  const broke = walletKnown && daily < 1 && premium < 1;
   const blocked = !signedIn || broke;
 
   async function submit(event: React.FormEvent) {
