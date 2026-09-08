@@ -888,11 +888,179 @@ begin
 
     return query select m, v_paid, v_notes;
   end loop;
+
+  -- Badges are recomputed in the same job, right after the prizes settle, so
+  -- the two can never disagree about a month.
+  perform public.recompute_profile_badges();
 end;
 $fn$;
 
 -- Clients must never be able to call this.
 revoke all on function public.run_monthly_leaderboard_payout(date) from public, anon, authenticated;
+
+-- ======================================================= badges & titles ==
+-- Twelve achievement titles: four categories x three percentile tiers. The
+-- category keys are the same ones the leaderboards use, so there is one
+-- vocabulary for 'loves' rather than a second one saying 'hearts'.
+create table if not exists public.badge_titles (
+  category text     not null,
+  tier     smallint not null,
+  title    text     not null unique,
+  label    text     not null,
+  primary key (category, tier),
+  constraint badge_titles_category_known check (category in ('likes', 'funny', 'loves', 'dislikes')),
+  constraint badge_titles_tier_known     check (tier in (1, 2, 3))
+);
+
+-- tier is the percentile band, so 1 = top 1% and is the rarest.
+insert into public.badge_titles (category, tier, title, label) values
+  ('loves',    3, 'Fine',             'Hearts'),
+  ('loves',    2, 'Gorgeous',         'Hearts'),
+  ('loves',    1, 'Rizzler',          'Hearts'),
+  ('likes',    3, 'Elite',            'Likes'),
+  ('likes',    2, 'Majestic',         'Likes'),
+  ('likes',    1, 'The GOAT',         'Likes'),
+  ('funny',    3, 'Comedian',         'Funny'),
+  ('funny',    2, 'Unhinged',         'Funny'),
+  ('funny',    1, 'Absolute Cinema',  'Funny'),
+  ('dislikes', 3, 'Obnoxious',        'Disliked'),
+  ('dislikes', 2, 'Opps Everywhere',  'Disliked'),
+  ('dislikes', 1, 'Most Wanted',      'Disliked')
+on conflict (category, tier) do update
+  set title = excluded.title, label = excluded.label;
+
+-- What each profile currently holds. Primary key on (profile_id, category)
+-- means one badge per category -- the best tier reached, not a collection of
+-- all three.
+create table if not exists public.profile_badges (
+  profile_id  uuid        not null references public.profiles (id) on delete cascade,
+  category    text        not null,
+  tier        smallint    not null,
+  awarded_at  timestamptz not null default now(),
+  primary key (profile_id, category),
+  foreign key (category, tier) references public.badge_titles (category, tier)
+);
+
+create index if not exists profile_badges_profile_idx on public.profile_badges (profile_id);
+
+alter table public.badge_titles   enable row level security;
+alter table public.profile_badges enable row level security;
+
+-- The twelve titles are public knowledge -- people should be able to see what
+-- is out there to earn. Who holds what is served by profile_titles() instead,
+-- so profile_badges itself needs no policy.
+drop policy if exists "badge titles: public read" on public.badge_titles;
+create policy "badge titles: public read" on public.badge_titles for select using (true);
+
+-- The title a profile has chosen to display. Written only by
+-- set_display_title(), which checks the badge is actually held.
+alter table public.profiles add column if not exists premium_display_title text;
+
+-- ------------------------------------------------ recompute every badge
+-- Run monthly, not on every reaction: all-time rankings shift as other people
+-- catch up, so a badge states where you stand as of the last settlement, and
+-- recomputing it live would make titles flicker on and off.
+--
+-- Percentile is taken among profiles holding at least one reaction of that
+-- type, so the denominator is people actually in the running rather than every
+-- account that ever signed up. greatest(1, ceil(n * pct)) keeps the top tier
+-- reachable on a small site: with 40 contenders ceil(0.4) is 1, so exactly one
+-- Rizzler exists rather than none at all.
+create or replace function public.recompute_profile_badges()
+returns table (category text, granted integer, revoked integer)
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+#variable_conflict use_column
+declare
+  cat       text;
+  v_granted integer;
+  v_revoked integer;
+begin
+  foreach cat in array array['likes', 'funny', 'loves', 'dislikes'] loop
+    with tallies as (
+      select p.id as profile_id, count(*)::bigint as score
+      from public.profiles p
+      join public.comments c on c.user_id = p.user_id
+      join public.comment_reactions r on r.comment_id = c.id
+      where r.reaction = public.metric_reaction(cat)
+      group by p.id
+    ), totals as (
+      select count(*)::numeric as n from tallies
+    ), ranked as (
+      select t.profile_id, rank() over (order by t.score desc) as rnk
+      from tallies t
+    ), tiered as (
+      select r.profile_id,
+             (case
+                when r.rnk <= greatest(1, ceil((select n from totals) * 0.01)) then 1
+                when r.rnk <= greatest(1, ceil((select n from totals) * 0.02)) then 2
+                when r.rnk <= greatest(1, ceil((select n from totals) * 0.03)) then 3
+              end)::smallint as tier
+      from ranked r
+    ), qualified as (
+      select profile_id, tier from tiered where tier is not null
+    ), pruned as (
+      -- Anyone who slipped out of the top 3% loses the badge. This is the
+      -- revocation half: all-time boards move as others catch up.
+      delete from public.profile_badges b
+      where b.category = cat
+        and not exists (select 1 from qualified q where q.profile_id = b.profile_id)
+      returning b.profile_id
+    ), upserted as (
+      insert into public.profile_badges (profile_id, category, tier)
+      select q.profile_id, cat, q.tier from qualified q
+      on conflict (profile_id, category) do update
+        set tier = excluded.tier,
+            -- Only restamp when the tier actually moved, so "held since" stays
+            -- meaningful for someone holding steady.
+            awarded_at = case
+                           when profile_badges.tier is distinct from excluded.tier
+                           then now() else profile_badges.awarded_at
+                         end
+      returning profile_id
+    )
+    select (select count(*)::integer from upserted), (select count(*)::integer from pruned)
+    into v_granted, v_revoked;
+
+    return query select cat, v_granted, v_revoked;
+  end loop;
+
+  -- A title you no longer hold cannot stay on display. Runs once at the end
+  -- rather than per category, so it catches every revocation in one sweep.
+  update public.profiles p
+  set premium_display_title = null
+  where p.premium_display_title is not null
+    and not exists (
+      select 1
+      from public.profile_badges b
+      join public.badge_titles t on t.category = b.category and t.tier = b.tier
+      where b.profile_id = p.id and t.title = p.premium_display_title
+    );
+end;
+$fn$;
+
+revoke all on function public.recompute_profile_badges() from public, anon, authenticated;
+
+-- ------------------------------------------------ what a profile holds
+-- Public view of the titles a profile currently holds, for their /u/[id] page
+-- and the picker on /settings. Aggregate-safe: nothing here but the badges.
+create or replace function public.profile_titles(p_profile_id uuid)
+returns table (category text, tier smallint, title text, label text, awarded_at timestamptz)
+language sql
+stable
+security definer
+set search_path = public
+as $fn$
+  select b.category, b.tier, t.title, t.label, b.awarded_at
+  from public.profile_badges b
+  join public.badge_titles t on t.category = b.category and t.tier = b.tier
+  where b.profile_id = p_profile_id
+  order by b.tier asc, t.label asc;
+$fn$;
+
+grant execute on function public.profile_titles(uuid) to anon, authenticated;
 
 -- ------------------------------------------------------ scheduling it
 -- pg_cron is available on this project, so the payout runs itself. If the
