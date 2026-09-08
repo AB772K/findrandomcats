@@ -16,6 +16,7 @@ export default function CommentBox({
   comments,
   wallet,
   signedIn,
+  rated,
   onPost,
   onEdit,
   onDelete,
@@ -24,6 +25,8 @@ export default function CommentBox({
   comments: CommentRow[];
   wallet: NotesWallet | null;
   signedIn: boolean;
+  /** Whether this user has already rated this cat. Commenting depends on it. */
+  rated: boolean;
   onPost: (body: string, noteKind: NoteKind) => Promise<string | null>;
   onEdit: (commentId: string, body: string) => Promise<string | null>;
   onDelete: (commentId: string) => Promise<string | null>;
@@ -78,7 +81,10 @@ export default function CommentBox({
   // post_comment() charges the note and is the real enforcement anyway, so the
   // worst case is an honest error message instead of a box disabled by mistake.
   const broke = walletKnown && daily < 1 && premium < 1;
-  const blocked = !signedIn || broke;
+  // Rating first is a rule of the site, not a UI preference: post_comment()
+  // refuses an unrated cat regardless. Greying the box out here just means the
+  // rule is visible before someone writes a paragraph, rather than after.
+  const blocked = !signedIn || broke || !rated;
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -107,6 +113,12 @@ export default function CommentBox({
         <span className="text-xs text-ink/45">Costs 1 NOTE</span>
       </div>
 
+      {signedIn && !rated ? (
+        <p className="rounded-2xl border border-lilac-200 bg-lilac-50 px-4 py-2.5 text-xs text-ink/60">
+          Give this cat a score out of 10 first — then you can comment.
+        </p>
+      ) : null}
+
       {signedIn ? (
         <form onSubmit={submit} className="space-y-3">
           {/* The picker sits inside the box, bottom-right, the way chat apps
@@ -119,7 +131,13 @@ export default function CommentBox({
               onChange={(event) => setBody(event.target.value)}
               rows={3}
               maxLength={2000}
-              placeholder={broke ? 'You are out of NOTES.' : 'Say something about this cat…'}
+              placeholder={
+                !rated
+                  ? 'Rate this cat first…'
+                  : broke
+                    ? 'You are out of NOTES.'
+                    : 'Say something about this cat…'
+              }
               disabled={blocked || busy}
               className="field resize-y pb-10"
             />

@@ -1495,6 +1495,16 @@ begin
     raise exception 'Comment cannot be empty.' using errcode = '22023';
   end if;
 
+  -- Rate first. Checked here rather than only in the UI, because the UI is the
+  -- half a determined caller skips -- and because this must be true before a
+  -- NOTE is charged, not after. Cheap enough to sit ahead of the row lock.
+  if not exists (
+    select 1 from public.ratings
+    where cat_id = p_cat_id and user_id = auth.uid()
+  ) then
+    raise exception 'Rate this cat before commenting.' using errcode = 'P0001';
+  end if;
+
   -- Lock the profile row so two concurrent comments cannot spend the same NOTE.
   select * into v_profile
   from public.profiles

@@ -94,6 +94,7 @@ export default function CatDetail({
         comments={bundle.comments}
         wallet={wallet}
         signedIn={signedIn}
+        rated={bundle.myStars !== null}
         onPost={handleComment}
         onEdit={handleEdit}
         onDelete={handleDelete}
