@@ -1023,7 +1023,7 @@ begin
 
   -- Badges are recomputed in the same job, right after the prizes settle, so
   -- the two can never disagree about a month.
-  perform public.recompute_profile_badges();
+  perform public.recompute_profile_badges(v_period);
 end;
 $fn$;
 
@@ -1102,6 +1102,43 @@ create policy "badge titles: public read" on public.badge_titles for select usin
 -- set_display_title(), which checks the badge is actually held.
 alter table public.profiles add column if not exists premium_display_title text;
 
+-- ------------------------------------------------------ title history
+-- What a profile held, month by month, kept after the badge itself is gone.
+-- profile_badges answers "who holds this now" and is overwritten every time
+-- the job runs; this answers "who held it in September 2026", which no amount
+-- of current state can reconstruct.
+--
+-- period matches leaderboard_payouts' convention -- the first of the month the
+-- settlement was for -- so a payout row and a history row from the same run
+-- carry the same date and can be read side by side.
+--
+-- title is stored rather than looked up through badge_titles. A title that is
+-- later renamed or retired must still read correctly in the history of the
+-- month it was actually held; a foreign key would rewrite the past instead.
+create table if not exists public.badge_history (
+  profile_id  uuid        not null references public.profiles (id) on delete cascade,
+  category    text        not null,
+  tier        smallint    not null,
+  title       text        not null,
+  period      date        not null,
+  recorded_at timestamptz not null default now(),
+  -- One tier of one category per month, so a re-run corrects rather than
+  -- duplicates -- the same idempotence the payout ledger relies on.
+  primary key (profile_id, category, period)
+);
+
+create index if not exists badge_history_profile_idx
+  on public.badge_history (profile_id, period desc);
+
+-- Served only through profile_title_history(), like profile_badges.
+alter table public.badge_history enable row level security;
+
+-- NOTE ON HISTORICAL DATA: there is deliberately no backfill here. Before this
+-- table existed nothing recorded which tier anyone held in a past month, and
+-- profile_badges holds only the present, so earlier months cannot be
+-- reconstructed -- inventing them from today's standings would be a fabricated
+-- record, not a recovered one. History starts at the next run of the job.
+
 -- ------------------------------------------------ recompute every badge
 -- Run monthly, not on every reaction: all-time rankings shift as other people
 -- catch up, so a badge states where you stand as of the last settlement, and
@@ -1113,7 +1150,12 @@ alter table public.profiles add column if not exists premium_display_title text;
 -- ever signed up. greatest(1, ceil(n * pct)) keeps the top tier
 -- reachable on a small site: with 40 contenders ceil(0.4) is 1, so exactly one
 -- Rizzler exists rather than none at all.
-create or replace function public.recompute_profile_badges()
+-- Adding the parameter would otherwise create a second overload alongside the
+-- old zero-argument version, leaving two functions of the same name and a
+-- coin toss over which one the job calls.
+drop function if exists public.recompute_profile_badges();
+
+create or replace function public.recompute_profile_badges(p_period date default null)
 returns table (category text, granted integer, revoked integer)
 language plpgsql
 security definer
@@ -1124,6 +1166,12 @@ declare
   cat       text;
   v_granted integer;
   v_revoked integer;
+  -- Defaults to the month the payout settles, so calling this on its own
+  -- stamps history the same way the monthly job does.
+  v_period  date := coalesce(
+    date_trunc('month', p_period)::date,
+    (date_trunc('month', now()) - interval '1 month')::date
+  );
 begin
   foreach cat in array array['likes', 'funny', 'loves', 'dislikes',
                              'daily_notes_spent', 'premium_notes_spent'] loop
@@ -1168,6 +1216,21 @@ begin
     select (select count(*)::integer from upserted), (select count(*)::integer from pruned)
     into v_granted, v_revoked;
 
+    -- Snapshot the whole category, not just what changed: the question this
+    -- answers is "what did people hold in this month", so a profile holding
+    -- steady has to appear every month, not only the month it first won.
+    -- Same statement, same transaction as the grant/revoke above, so history
+    -- and current holdings can never disagree about a month.
+    insert into public.badge_history (profile_id, category, tier, title, period)
+    select b.profile_id, b.category, b.tier, t.title, v_period
+    from public.profile_badges b
+    join public.badge_titles t on t.category = b.category and t.tier = b.tier
+    where b.category = cat
+    on conflict (profile_id, category, period) do update
+      set tier = excluded.tier,
+          title = excluded.title,
+          recorded_at = now();
+
     return query select cat, v_granted, v_revoked;
   end loop;
 
@@ -1185,7 +1248,7 @@ begin
 end;
 $fn$;
 
-revoke all on function public.recompute_profile_badges() from public, anon, authenticated;
+revoke all on function public.recompute_profile_badges(date) from public, anon, authenticated;
 
 -- ------------------------------------------------ what a profile holds
 -- Public view of the titles a profile currently holds, for their /u/[id] page
@@ -1205,6 +1268,42 @@ as $fn$
 $fn$;
 
 grant execute on function public.profile_titles(uuid) to anon, authenticated;
+
+-- ------------------------------------------- what a profile has ever held
+-- The history counterpart to profile_titles(), same stance: security definer,
+-- aggregate-safe, nothing here but badges and the month they were held in.
+-- Most recent month first, so a profile page reads newest-down.
+--
+-- label is joined from badge_titles for display but the title itself comes
+-- from the history row, so a retired title still renders under the month it
+-- was held; a category no longer in badge_titles falls back to its own key.
+create or replace function public.profile_title_history(p_profile_id uuid)
+returns table (
+  category    text,
+  tier        smallint,
+  title       text,
+  label       text,
+  period      date,
+  recorded_at timestamptz
+)
+language sql
+stable
+security definer
+set search_path = public
+as $fn$
+  select h.category,
+         h.tier,
+         h.title,
+         coalesce(t.label, h.category),
+         h.period,
+         h.recorded_at
+  from public.badge_history h
+  left join public.badge_titles t on t.category = h.category and t.tier = h.tier
+  where h.profile_id = p_profile_id
+  order by h.period desc, h.category asc;
+$fn$;
+
+grant execute on function public.profile_title_history(uuid) to anon, authenticated;
 
 -- --------------------------------------------------- choose your title
 -- Only a badge you currently hold may be displayed. The picker on /settings

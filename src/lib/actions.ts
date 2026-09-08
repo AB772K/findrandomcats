@@ -18,6 +18,7 @@ import type {
   NoteKind,
   NotesWallet,
   ProfileTitle,
+  ProfileTitleHistoryRow,
   ReactionKind,
   ReactionState,
   RatingTally,
@@ -560,6 +561,22 @@ export async function fetchProfileTitles(profileId: string): Promise<ProfileTitl
   const { data, error } = await supabase.rpc('profile_titles', { p_profile_id: profileId });
   if (error) return [];
   return (data ?? []) as ProfileTitle[];
+}
+
+/**
+ * Every month this profile held a title, most recent first. Separate from
+ * fetchProfileTitles(): one answers what they hold, the other what they held,
+ * and a revoked badge only appears in the second.
+ */
+export async function fetchProfileTitleHistory(
+  profileId: string,
+): Promise<ProfileTitleHistoryRow[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc('profile_title_history', {
+    p_profile_id: profileId,
+  });
+  if (error) return [];
+  return (data ?? []) as ProfileTitleHistoryRow[];
 }
 
 export type SetTitleResult = { ok: true; title: string | null } | { ok: false; error: string };

@@ -128,6 +128,17 @@ export type ReactionState = {
 
 /** The six ranked lists on /leaderboard. */
 /** Reaction metrics only -- NOTES spent is deliberately not rankable. */
+/** One month in which a profile held a title, kept after the badge is gone. */
+export type ProfileTitleHistoryRow = {
+  category: LeaderboardMetric;
+  tier: 1 | 2 | 3;
+  title: string;
+  label: string;
+  /** First of the month this was true, matching the payout ledger's period. */
+  period: string;
+  recorded_at: string;
+};
+
 export type LeaderboardMetric =
   | 'likes'
   | 'funny'

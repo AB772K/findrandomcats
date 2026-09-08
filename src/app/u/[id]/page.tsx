@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import Avatar from '@/components/Avatar';
 import DeleteCatButton from '@/components/DeleteCatButton';
 import TitleBadge from '@/components/TitleBadge';
+import TitleHistory from '@/components/TitleHistory';
 import SuccessToast from '@/components/SuccessToast';
 import { displayNameOf } from '@/lib/avatar';
 import { createClient, getSessionUser } from '@/lib/supabase/server';
@@ -11,6 +12,7 @@ import {
   TIER_LABELS,
   type Cat,
   type ProfileTitle,
+  type ProfileTitleHistoryRow,
   type PublicProfile,
   type RatingTally,
   type ReactionTotals,
@@ -55,8 +57,15 @@ export default async function PublicProfilePage({
   // Uploads are the exception: `cats` is world-readable by policy, so the grid
   // needs no aggregate wrapper -- and uploaded_by already holds a profiles.id,
   // never a user_id.
-  const [profileResult, ratingsResult, uploadsResult, reactionsResult, viewer, titlesResult] =
-    await Promise.all([
+  const [
+    profileResult,
+    ratingsResult,
+    uploadsResult,
+    reactionsResult,
+    viewer,
+    titlesResult,
+    historyResult,
+  ] = await Promise.all([
     supabase.rpc('public_profile', { p_profile_id: params.id }),
     supabase.rpc('profile_rating_summary', { p_profile_id: params.id }),
     supabase
@@ -70,6 +79,7 @@ export default async function PublicProfilePage({
     supabase.rpc('profile_reaction_totals', { p_profile_id: params.id }),
     getSessionUser().then((user) => ({ data: { user } })),
     supabase.rpc('profile_titles', { p_profile_id: params.id }),
+    supabase.rpc('profile_title_history', { p_profile_id: params.id }),
   ]);
 
   const profile = (profileResult.data as PublicProfile[] | null)?.[0];
@@ -86,6 +96,7 @@ export default async function PublicProfilePage({
 
   const uploads = (uploadsResult.data ?? []) as Cat[];
   const titles = (titlesResult.data ?? []) as ProfileTitle[];
+  const history = (historyResult.data ?? []) as ProfileTitleHistoryRow[];
   const name = displayNameOf(profile.display_name);
 
   const totals = ((reactionsResult.data as ReactionTotals[] | null)?.[0] ?? {
@@ -162,7 +173,7 @@ export default async function PublicProfilePage({
           <div className="mb-3 flex items-baseline justify-between gap-3">
             <h2 className="font-display text-base font-semibold">Titles earned</h2>
             <span className="text-xs text-ink/45">
-              {titles.length} of 4 categories
+              {titles.length} of 6 categories
             </span>
           </div>
           <ul className="flex flex-wrap gap-2">
@@ -179,10 +190,14 @@ export default async function PublicProfilePage({
             ))}
           </ul>
           <p className="mt-3 text-[11px] text-ink/40">
-            Recalculated monthly from all-time reactions received.
+            Recalculated monthly from all-time standings.
           </p>
         </section>
       ) : null}
+
+      {/* Separate from the section above on purpose: that one answers what they
+          hold, this one what they have held. A title can be in both. */}
+      <TitleHistory rows={history} />
 
       <section className="card p-5">
         <h2 className="mb-3 font-display text-base font-semibold">Reactions received</h2>
