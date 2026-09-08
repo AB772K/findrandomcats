@@ -771,6 +771,170 @@ $fn$;
 
 grant execute on function public.monthly_leaderboard(text, integer) to anon, authenticated;
 
+-- ==================================================== monthly payouts ====
+-- Ledger of every reward ever issued. The unique key is what makes the payout
+-- idempotent: a second run for the same month inserts nothing and therefore
+-- credits nothing, so a retried cron job or a nervous manual re-run is safe.
+create table if not exists public.leaderboard_payouts (
+  id            uuid primary key default gen_random_uuid(),
+  period        date not null,
+  metric        text not null,
+  profile_id    uuid not null references public.profiles (id) on delete cascade,
+  rank          integer not null,
+  notes_awarded integer not null,
+  paid_at       timestamptz not null default now(),
+  constraint leaderboard_payouts_unique unique (period, metric, profile_id)
+);
+
+create index if not exists leaderboard_payouts_profile_idx on public.leaderboard_payouts (profile_id);
+
+alter table public.leaderboard_payouts enable row level security;
+-- No policies: this is a system ledger. Nothing in the app reads it directly.
+
+-- The prize scale. Ranks past 50 are worth nothing, which is also what keeps
+-- the payout bounded no matter how large the site gets.
+create or replace function public.payout_for_rank(p_rank integer)
+returns integer
+language sql
+immutable
+as $fn$
+  select case
+           when p_rank = 1  then 50
+           when p_rank = 2  then 30
+           when p_rank = 3  then 20
+           when p_rank = 4  then 15
+           when p_rank = 5  then 10
+           when p_rank = 6  then 8
+           when p_rank = 7  then 6
+           when p_rank = 8  then 5
+           when p_rank = 9  then 4
+           when p_rank = 10 then 3
+           when p_rank between 11 and 50 then 1
+           else 0
+         end;
+$fn$;
+
+-- Pays out one finished month, all four categories, and returns what it did.
+--
+-- p_period is any date inside the month to settle; it defaults to LAST month,
+-- which is what the 1st-of-the-month cron job wants.
+--
+-- This is the one legitimate place premium_notes_balance goes up outside a
+-- payment webhook: the notes are issued by the system as a prize, not bought.
+-- It is deliberately NOT granted to anon or authenticated -- only the owner and
+-- service_role may call it, so no client can award itself anything.
+--
+-- Ties share a rank and therefore share a prize (standard competition ranking):
+-- two people tied at the top both take 50 and the next is rank 3. The
+-- alternative, breaking ties by name, would hand out 50 versus 30 on alphabetical
+-- order, which is not a thing anyone should lose 20 notes to.
+create or replace function public.run_monthly_leaderboard_payout(p_period date default null)
+returns table (metric text, profiles_paid integer, notes_awarded integer)
+language plpgsql
+security definer
+set search_path = public
+as $fn$
+-- The OUT parameter names (metric, notes_awarded) are also column names in
+-- leaderboard_payouts, so unqualified references inside the statement below are
+-- ambiguous. Resolve them to the column, which is what every one of them means;
+-- assignments to the OUT variables are plpgsql statements and unaffected.
+#variable_conflict use_column
+declare
+  v_period date := coalesce(
+    date_trunc('month', p_period)::date,
+    (date_trunc('month', now()) - interval '1 month')::date
+  );
+  v_start timestamptz := v_period::timestamptz;
+  v_end   timestamptz := (v_period + interval '1 month')::timestamptz;
+  m       text;
+  v_paid  integer;
+  v_notes integer;
+begin
+  foreach m in array array['likes', 'funny', 'loves', 'dislikes'] loop
+    with tallies as (
+      select p.id as profile_id, count(*)::bigint as score
+      from public.profiles p
+      join public.comments c on c.user_id = p.user_id
+      join public.comment_reactions r on r.comment_id = c.id
+      where r.created_at >= v_start
+        and r.created_at <  v_end
+        and r.reaction = public.metric_reaction(m)
+      group by p.id
+    ), ranked as (
+      select profile_id,
+             rank() over (order by score desc)::integer as rnk
+      from tallies
+    ), prizes as (
+      select profile_id, rnk, public.payout_for_rank(rnk) as notes
+      from ranked
+      where rnk <= 50
+    ), inserted as (
+      insert into public.leaderboard_payouts (period, metric, profile_id, rank, notes_awarded)
+      select v_period, m, profile_id, rnk, notes
+      from prizes
+      where notes > 0
+      on conflict (period, metric, profile_id) do nothing
+      returning profile_id, notes_awarded
+    ), credited as (
+      update public.profiles p
+      set premium_notes_balance = p.premium_notes_balance + i.notes_awarded
+      from inserted i
+      where p.id = i.profile_id
+      returning i.notes_awarded
+    )
+    select count(*)::integer, coalesce(sum(notes_awarded), 0)::integer
+    into v_paid, v_notes
+    from credited;
+
+    return query select m, v_paid, v_notes;
+  end loop;
+end;
+$fn$;
+
+-- Clients must never be able to call this.
+revoke all on function public.run_monthly_leaderboard_payout(date) from public, anon, authenticated;
+
+-- ------------------------------------------------------ scheduling it
+-- pg_cron is available on this project, so the payout runs itself. If the
+-- extension cannot be installed (insufficient privilege on a self-hosted
+-- setup), the notice below fires and the function simply has to be invoked by
+-- hand -- from the SQL editor, or with the service-role key:
+--
+--     select * from public.run_monthly_leaderboard_payout();          -- last month
+--     select * from public.run_monthly_leaderboard_payout('2026-08-01'); -- a specific one
+--
+-- Either way it is idempotent, so a manual run after an automated one is a
+-- no-op rather than a double payout.
+do $do$
+begin
+  create extension if not exists pg_cron;
+exception when others then
+  raise notice 'pg_cron unavailable (%): run_monthly_leaderboard_payout() must be triggered manually', sqlerrm;
+end $do$;
+
+-- Scheduled through EXECUTE so the statements are only name-resolved at run
+-- time -- the whole script is parsed up front, and a bare cron.schedule() would
+-- fail to parse on a database where the extension did not exist yet.
+do $do$
+begin
+  if not exists (select 1 from pg_extension where extname = 'pg_cron') then
+    return;
+  end if;
+
+  -- Drop any previous definition first so re-running the script does not stack
+  -- duplicate jobs.
+  execute $x$ select cron.unschedule(jobid) from cron.job
+               where jobname = 'findrandomcats-monthly-payout' $x$;
+
+  -- 00:05 UTC on the 1st: past midnight, so date_trunc has certainly rolled
+  -- over, and the default period is the month that just finished.
+  execute $x$ select cron.schedule(
+                'findrandomcats-monthly-payout',
+                '5 0 1 * *',
+                $job$ select public.run_monthly_leaderboard_payout(); $job$
+              ) $x$;
+end $do$;
+
 grant execute on function public.public_profile(uuid) to anon, authenticated;
 grant execute on function public.profile_rating_summary(uuid) to anon, authenticated;
 
