@@ -248,23 +248,10 @@ export default function CommentItem({
             const mine = reactions.my_reaction === kind;
             const count = countFor(kind);
 
-            // On your own comment the tallies still show -- you should see what
-            // people thought -- but they render as plain counts, not buttons.
-            if (comment.is_mine) {
-              if (count === 0) return null;
-              return (
-                <span
-                  key={kind}
-                  title={`${count} ${label.toLowerCase()}`}
-                  className="flex items-center gap-1 rounded-full border border-transparent px-2 py-0.5 text-[11px] text-ink/45"
-                >
-                  <span aria-hidden>{emoji}</span>
-                  <span className="sr-only">{label}</span>
-                  <span className="tabular-nums">{count}</span>
-                </span>
-              );
-            }
-
+            // One code path for every case, so your own comment's bar lines up
+            // with everyone else's exactly rather than approximately. Your own
+            // renders the same four icons, just disabled -- omitting the empty
+            // ones made a fresh comment look broken next to other people's.
             return (
               <button
                 key={kind}
@@ -273,13 +260,27 @@ export default function CommentItem({
                 disabled={!canReact || reacting}
                 aria-pressed={mine}
                 title={
-                  signedIn ? (mine ? `Remove your ${label.toLowerCase()}` : label) : 'Sign in to react'
+                  comment.is_mine
+                    ? "You can't react to your own comment"
+                    : signedIn
+                      ? mine
+                        ? `Remove your ${label.toLowerCase()}`
+                        : label
+                      : 'Sign in to react'
                 }
                 className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] transition duration-200 ${
                   mine
                     ? 'border-blush-300 bg-blush-50 font-semibold text-ink'
-                    : 'border-transparent text-ink/45 hover:border-blush-100 hover:bg-blush-50/60'
-                } ${!signedIn ? 'cursor-default opacity-60' : ''}`}
+                    : 'border-transparent text-ink/45'
+                } ${
+                  comment.is_mine
+                    ? // Clearly inert: dimmed, and the cursor says so before the
+                      // tooltip has a chance to.
+                      'cursor-not-allowed opacity-45'
+                    : signedIn
+                      ? 'hover:border-blush-100 hover:bg-blush-50/60'
+                      : 'cursor-default opacity-60'
+                }`}
               >
                 <span aria-hidden>{emoji}</span>
                 <span className="sr-only">{label}</span>
