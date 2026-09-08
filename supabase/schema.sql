@@ -780,6 +780,43 @@ $fn$;
 
 grant execute on function public.monthly_metric_tally(text, timestamptz, timestamptz) to anon, authenticated;
 
+-- The all-time counterpart, for the same reason: the all-time board and the
+-- all-time badges must rank identically, so they read from one query. Reactions
+-- are counted; NOTES spent come from the lifetime counters on the profile,
+-- which are the authority on a lifetime total and predate the spend log.
+create or replace function public.all_time_metric_tally(p_metric text)
+returns table (profile_id uuid, score bigint)
+language sql
+stable
+security definer
+set search_path = public
+as $fn$
+  select p.id, count(*)::bigint
+  from public.profiles p
+  join public.comments c on c.user_id = p.user_id
+  join public.comment_reactions r on r.comment_id = c.id
+  where public.metric_reaction(p_metric) is not null
+    and r.reaction = public.metric_reaction(p_metric)
+  group by p.id
+  having count(*) > 0
+
+  union all
+
+  select p.id,
+         (case p_metric
+            when 'daily_notes_spent' then p.daily_notes_spent
+            else p.premium_notes_spent
+          end)::bigint
+  from public.profiles p
+  where p_metric in ('daily_notes_spent', 'premium_notes_spent')
+    and (case p_metric
+           when 'daily_notes_spent' then p.daily_notes_spent
+           else p.premium_notes_spent
+         end) > 0;
+$fn$;
+
+grant execute on function public.all_time_metric_tally(text) to anon, authenticated;
+
 -- One function, one metric per call, whitelisted. Returns nothing but the
 -- name, the avatar and the single number being ranked -- no wallet balances,
 -- no user ids, no emails, and no way to ask for a column that is not on the
@@ -805,40 +842,17 @@ as $fn$
 declare
   v_limit integer := least(greatest(coalesce(p_limit, 50), 1), 50);
 begin
-  if p_metric in ('likes', 'funny', 'loves', 'dislikes') then
-    return query
-      select p.id, p.display_name, p.profile_picture_url, count(*)::bigint as score
-      from public.profiles p
-      join public.comments c on c.user_id = p.user_id
-      join public.comment_reactions r on r.comment_id = c.id
-      where r.reaction = public.metric_reaction(p_metric)
-      group by p.id, p.display_name, p.profile_picture_url
-      having count(*) > 0
-      order by score desc, p.display_name asc nulls last
-      limit v_limit;
-
-  -- All time reads the lifetime counter on the profile, not the spend log: the
-  -- counter is the authority on a lifetime total, and it predates the log.
-  elsif p_metric in ('daily_notes_spent', 'premium_notes_spent') then
-    return query
-      select p.id,
-             p.display_name,
-             p.profile_picture_url,
-             (case p_metric
-                when 'daily_notes_spent' then p.daily_notes_spent
-                else p.premium_notes_spent
-              end)::bigint as score
-      from public.profiles p
-      where (case p_metric
-               when 'daily_notes_spent' then p.daily_notes_spent
-               else p.premium_notes_spent
-             end) > 0
-      order by score desc, p.display_name asc nulls last
-      limit v_limit;
-
-  else
+  if p_metric not in ('likes', 'funny', 'loves', 'dislikes',
+                      'daily_notes_spent', 'premium_notes_spent') then
     raise exception 'Unknown leaderboard.' using errcode = '22023';
   end if;
+
+  return query
+    select p.id, p.display_name, p.profile_picture_url, t.score
+    from public.all_time_metric_tally(p_metric) t
+    join public.profiles p on p.id = t.profile_id
+    order by t.score desc, p.display_name asc nulls last
+    limit v_limit;
 end;
 $fn$;
 
@@ -1017,7 +1031,7 @@ $fn$;
 revoke all on function public.run_monthly_leaderboard_payout(date) from public, anon, authenticated;
 
 -- ======================================================= badges & titles ==
--- Twelve achievement titles: four categories x three percentile tiers. The
+-- Eighteen achievement titles: six categories x three percentile tiers. The
 -- category keys are the same ones the leaderboards use, so there is one
 -- vocabulary for 'loves' rather than a second one saying 'hearts'.
 create table if not exists public.badge_titles (
@@ -1029,6 +1043,14 @@ create table if not exists public.badge_titles (
   constraint badge_titles_category_known check (category in ('likes', 'funny', 'loves', 'dislikes')),
   constraint badge_titles_tier_known     check (tier in (1, 2, 3))
 );
+
+-- The category list grew with the two NOTES-spent boards. A CHECK constraint
+-- cannot be added conditionally, so it is dropped and rewritten -- which also
+-- means an existing database picks up the new categories on re-running this.
+alter table public.badge_titles drop constraint if exists badge_titles_category_known;
+alter table public.badge_titles add constraint badge_titles_category_known
+  check (category in ('likes', 'funny', 'loves', 'dislikes',
+                      'daily_notes_spent', 'premium_notes_spent'));
 
 -- tier is the percentile band, so 1 = top 1% and is the rarest.
 insert into public.badge_titles (category, tier, title, label) values
@@ -1043,7 +1065,13 @@ insert into public.badge_titles (category, tier, title, label) values
   ('funny',    1, 'Absolute Cinema',  'Funny'),
   ('dislikes', 3, 'Obnoxious',        'Disliked'),
   ('dislikes', 2, 'Opps Everywhere',  'Disliked'),
-  ('dislikes', 1, 'Most Wanted',      'Disliked')
+  ('dislikes', 1, 'Most Wanted',      'Disliked'),
+  ('daily_notes_spent',   3, 'Regular',         'Daily NOTES'),
+  ('daily_notes_spent',   2, 'Addicted',        'Daily NOTES'),
+  ('daily_notes_spent',   1, 'Obsessed',        'Daily NOTES'),
+  ('premium_notes_spent', 3, 'Premium Enjoyer', 'Premium NOTES'),
+  ('premium_notes_spent', 2, 'Whale',           'Premium NOTES'),
+  ('premium_notes_spent', 1, 'The Financier',   'Premium NOTES')
 on conflict (category, tier) do update
   set title = excluded.title, label = excluded.label;
 
@@ -1064,7 +1092,7 @@ create index if not exists profile_badges_profile_idx on public.profile_badges (
 alter table public.badge_titles   enable row level security;
 alter table public.profile_badges enable row level security;
 
--- The twelve titles are public knowledge -- people should be able to see what
+-- The eighteen titles are public knowledge -- people should be able to see what
 -- is out there to earn. Who holds what is served by profile_titles() instead,
 -- so profile_badges itself needs no policy.
 drop policy if exists "badge titles: public read" on public.badge_titles;
@@ -1079,9 +1107,10 @@ alter table public.profiles add column if not exists premium_display_title text;
 -- catch up, so a badge states where you stand as of the last settlement, and
 -- recomputing it live would make titles flicker on and off.
 --
--- Percentile is taken among profiles holding at least one reaction of that
--- type, so the denominator is people actually in the running rather than every
--- account that ever signed up. greatest(1, ceil(n * pct)) keeps the top tier
+-- Percentile is taken among profiles with at least one of that thing -- one
+-- reaction of that type, or one NOTE spent from that wallet -- so the
+-- denominator is people actually in the running rather than every account that
+-- ever signed up. greatest(1, ceil(n * pct)) keeps the top tier
 -- reachable on a small site: with 40 contenders ceil(0.4) is 1, so exactly one
 -- Rizzler exists rather than none at all.
 create or replace function public.recompute_profile_badges()
@@ -1096,14 +1125,11 @@ declare
   v_granted integer;
   v_revoked integer;
 begin
-  foreach cat in array array['likes', 'funny', 'loves', 'dislikes'] loop
+  foreach cat in array array['likes', 'funny', 'loves', 'dislikes',
+                             'daily_notes_spent', 'premium_notes_spent'] loop
     with tallies as (
-      select p.id as profile_id, count(*)::bigint as score
-      from public.profiles p
-      join public.comments c on c.user_id = p.user_id
-      join public.comment_reactions r on r.comment_id = c.id
-      where r.reaction = public.metric_reaction(cat)
-      group by p.id
+      select t.profile_id, t.score
+      from public.all_time_metric_tally(cat) t
     ), totals as (
       select count(*)::numeric as n from tallies
     ), ranked as (

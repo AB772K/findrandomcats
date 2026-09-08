@@ -49,8 +49,9 @@ export default function TitlePicker({
 
       {titles.length === 0 ? (
         <p className="rounded-2xl border border-blush-100 bg-blush-50/60 px-4 py-3 text-xs text-ink/55">
-          Titles are earned by finishing in the top 3% of a reaction category, all time.
-          They are recalculated once a month — keep collecting hearts, likes and laughs.
+          Titles are earned by finishing in the top 3% of a category, all time — the four
+          reaction boards and the two NOTES-spent ones. They are recalculated once a month,
+          so keep collecting hearts, likes and laughs.
         </p>
       ) : (
         <>
