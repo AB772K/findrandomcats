@@ -668,6 +668,10 @@ grant execute on function public.profile_reaction_totals(uuid) to anon, authenti
 -- name, the avatar and the single number being ranked -- no wallet balances,
 -- no user ids, no emails, and no way to ask for a column that is not on the
 -- list. Profiles scoring zero are left out rather than padding the table.
+--
+-- Reaction metrics only. Ranking NOTES spent rewarded whoever burned the most
+-- currency rather than whoever the room actually liked, and premium NOTES are
+-- bought, so that board ranked spending money. Both are gone.
 create or replace function public.leaderboard(p_metric text, p_limit integer default 50)
 returns table (
   profile_id          uuid,
@@ -698,22 +702,6 @@ begin
       group by p.id, p.display_name, p.profile_picture_url
       having count(*) > 0
       order by score desc, p.display_name asc nulls last
-      limit v_limit;
-
-  elsif p_metric = 'daily_notes_spent' then
-    return query
-      select p.id, p.display_name, p.profile_picture_url, p.daily_notes_spent::bigint
-      from public.profiles p
-      where p.daily_notes_spent > 0
-      order by p.daily_notes_spent desc, p.display_name asc nulls last
-      limit v_limit;
-
-  elsif p_metric = 'premium_notes_spent' then
-    return query
-      select p.id, p.display_name, p.profile_picture_url, p.premium_notes_spent::bigint
-      from public.profiles p
-      where p.premium_notes_spent > 0
-      order by p.premium_notes_spent desc, p.display_name asc nulls last
       limit v_limit;
 
   else

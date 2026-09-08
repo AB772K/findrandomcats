@@ -106,13 +106,8 @@ export type ReactionState = {
 };
 
 /** The six ranked lists on /leaderboard. */
-export type LeaderboardMetric =
-  | 'likes'
-  | 'funny'
-  | 'loves'
-  | 'dislikes'
-  | 'daily_notes_spent'
-  | 'premium_notes_spent';
+/** Reaction metrics only -- NOTES spent is deliberately not rankable. */
+export type LeaderboardMetric = 'likes' | 'funny' | 'loves' | 'dislikes';
 
 export type LeaderboardRow = {
   profile_id: string;

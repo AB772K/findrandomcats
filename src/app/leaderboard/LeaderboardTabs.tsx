@@ -12,8 +12,6 @@ export const BOARDS: { metric: LeaderboardMetric; tab: string; heading: string; 
   { metric: 'funny', tab: '\u{1F602} Funny', heading: 'Most funny received', unit: 'funny' },
   { metric: 'loves', tab: '❤️ Hearts', heading: 'Most hearts received', unit: 'hearts' },
   { metric: 'dislikes', tab: '\u{1F44E} Dislikes', heading: 'Most dislikes received', unit: 'dislikes' },
-  { metric: 'daily_notes_spent', tab: 'Daily NOTES', heading: 'Most daily NOTES spent', unit: 'spent' },
-  { metric: 'premium_notes_spent', tab: 'Premium NOTES', heading: 'Most premium NOTES spent', unit: 'spent' },
 ];
 
 /** Medal for the top three, plain number after that. */

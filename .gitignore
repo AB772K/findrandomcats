@@ -11,3 +11,7 @@ npm-debug.log*
 .vercel
 next-env.d.ts
 *.tsbuildinfo
+
+# Local scratch scripts (schema apply / verification helpers)
+tmp-*.mjs
+tmp-*.cjs
