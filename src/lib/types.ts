@@ -128,7 +128,13 @@ export type ReactionState = {
 
 /** The six ranked lists on /leaderboard. */
 /** Reaction metrics only -- NOTES spent is deliberately not rankable. */
-export type LeaderboardMetric = 'likes' | 'funny' | 'loves' | 'dislikes';
+export type LeaderboardMetric =
+  | 'likes'
+  | 'funny'
+  | 'loves'
+  | 'dislikes'
+  | 'daily_notes_spent'
+  | 'premium_notes_spent';
 
 /** Which window a board covers. Monthly is the current calendar month. */
 export type LeaderboardScope = 'monthly' | 'all-time';

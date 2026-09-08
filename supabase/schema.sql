@@ -675,6 +675,50 @@ $fn$;
 
 grant execute on function public.profile_reaction_totals(uuid) to anon, authenticated;
 
+-- ----------------------------------------------------- notes spend log
+-- daily_notes_spent and premium_notes_spent on profiles are lifetime counters,
+-- so they can answer "who has spent the most ever" but not "who has spent the
+-- most this month" -- the number carries no dates. This is the missing half:
+-- one row per NOTE spent, stamped with when.
+--
+-- comment_id is what makes refunds exact. A NOTE is refunded by deleting its
+-- row, not by writing a negative one, so a month can never go negative and the
+-- monthly board always agrees with the lifetime counter beside it. It is
+-- ON DELETE SET NULL rather than CASCADE deliberately: deleting a cat refunds
+-- the premium NOTES spent on it but NOT the daily ones, so the rows have to
+-- outlive the comment and be removed only where a refund actually happened.
+create table if not exists public.notes_spend_log (
+  id         bigserial   primary key,
+  profile_id uuid        not null references public.profiles(id) on delete cascade,
+  comment_id uuid        references public.comments(id) on delete set null,
+  kind       text        not null,
+  created_at timestamptz not null default now(),
+  constraint notes_spend_log_kind_known check (kind in ('daily', 'premium'))
+);
+
+create index if not exists notes_spend_log_month_idx
+  on public.notes_spend_log (kind, created_at, profile_id);
+create index if not exists notes_spend_log_comment_idx
+  on public.notes_spend_log (comment_id);
+
+-- Reachable only through the security-definer functions below, same as the
+-- payout ledger: enabled, no policies, so PostgREST can see nothing directly.
+alter table public.notes_spend_log enable row level security;
+
+-- Backfill from the comments that already exist, using each comment's own
+-- timestamp. Without this the monthly board would read as empty until people
+-- started commenting again, which would look like a broken feature rather than
+-- a new one. Guarded on the table being empty so re-running the schema does
+-- not double every historical spend.
+insert into public.notes_spend_log (profile_id, comment_id, kind, created_at)
+select p.id,
+       c.id,
+       case when c.used_premium_note then 'premium' else 'daily' end,
+       c.created_at
+from public.comments c
+join public.profiles p on p.user_id = c.user_id
+where not exists (select 1 from public.notes_spend_log);
+
 -- ------------------------------------------------------- leaderboards
 -- Board metric name -> reaction enum value. Kept in one place so the all-time
 -- and monthly boards cannot drift apart on what 'loves' means.
@@ -693,14 +737,59 @@ $fn$;
 
 grant execute on function public.metric_reaction(text) to anon, authenticated;
 
+-- One month's score for any metric, whatever it is counted from.
+--
+-- The monthly board and the monthly payout both rank the same thing, so they
+-- read it from the same function rather than each carrying their own copy of
+-- the query -- the reason metric_reaction() exists, applied one level up. The
+-- two arms are mutually exclusive: a metric is either a reaction or a wallet,
+-- so exactly one of them ever returns rows.
+create or replace function public.monthly_metric_tally(
+  p_metric text,
+  p_start  timestamptz,
+  p_end    timestamptz
+)
+returns table (profile_id uuid, score bigint)
+language sql
+stable
+security definer
+set search_path = public
+as $fn$
+  -- Reactions RECEIVED in the window, by the author who earned them.
+  select p.id, count(*)::bigint
+  from public.profiles p
+  join public.comments c on c.user_id = p.user_id
+  join public.comment_reactions r on r.comment_id = c.id
+  where public.metric_reaction(p_metric) is not null
+    and r.reaction = public.metric_reaction(p_metric)
+    and r.created_at >= p_start
+    and r.created_at <  p_end
+  group by p.id
+
+  union all
+
+  -- NOTES spent in the window, from the log rather than the lifetime counter.
+  select l.profile_id, count(*)::bigint
+  from public.notes_spend_log l
+  where p_metric in ('daily_notes_spent', 'premium_notes_spent')
+    and l.kind = case p_metric when 'daily_notes_spent' then 'daily' else 'premium' end
+    and l.created_at >= p_start
+    and l.created_at <  p_end
+  group by l.profile_id;
+$fn$;
+
+grant execute on function public.monthly_metric_tally(text, timestamptz, timestamptz) to anon, authenticated;
+
 -- One function, one metric per call, whitelisted. Returns nothing but the
 -- name, the avatar and the single number being ranked -- no wallet balances,
 -- no user ids, no emails, and no way to ask for a column that is not on the
 -- list. Profiles scoring zero are left out rather than padding the table.
 --
--- Reaction metrics only. Ranking NOTES spent rewarded whoever burned the most
--- currency rather than whoever the room actually liked, and premium NOTES are
--- bought, so that board ranked spending money. Both are gone.
+-- Six metrics: the four reaction boards, plus the two NOTES-spent boards. The
+-- spend boards were dropped once for ranking who burned the most currency
+-- rather than who the room liked; they are back because they now have a
+-- monthly window, where spending is a month's effort rather than an
+-- accumulated total nobody can catch up with.
 create or replace function public.leaderboard(p_metric text, p_limit integer default 50)
 returns table (
   profile_id          uuid,
@@ -728,6 +817,25 @@ begin
       order by score desc, p.display_name asc nulls last
       limit v_limit;
 
+  -- All time reads the lifetime counter on the profile, not the spend log: the
+  -- counter is the authority on a lifetime total, and it predates the log.
+  elsif p_metric in ('daily_notes_spent', 'premium_notes_spent') then
+    return query
+      select p.id,
+             p.display_name,
+             p.profile_picture_url,
+             (case p_metric
+                when 'daily_notes_spent' then p.daily_notes_spent
+                else p.premium_notes_spent
+              end)::bigint as score
+      from public.profiles p
+      where (case p_metric
+               when 'daily_notes_spent' then p.daily_notes_spent
+               else p.premium_notes_spent
+             end) > 0
+      order by score desc, p.display_name asc nulls last
+      limit v_limit;
+
   else
     raise exception 'Unknown leaderboard.' using errcode = '22023';
   end if;
@@ -742,6 +850,9 @@ grant execute on function public.leaderboard(text, integer) to anon, authenticat
 -- so the board is the reactions RECEIVED this calendar month rather than the
 -- comments written in it -- an old comment that gets loved today still counts
 -- toward today's month.
+--
+-- The NOTES-spent boards are windowed the same way, off notes_spend_log rather
+-- than the lifetime counters, which is the whole reason that table exists.
 --
 -- date_trunc('month', now()) means no reset job is needed anywhere: the board
 -- empties itself the moment the date rolls over.
@@ -762,21 +873,17 @@ declare
   v_start timestamptz := date_trunc('month', now());
   v_end   timestamptz := date_trunc('month', now()) + interval '1 month';
 begin
-  if p_metric not in ('likes', 'funny', 'loves', 'dislikes') then
+  if p_metric not in ('likes', 'funny', 'loves', 'dislikes',
+                      'daily_notes_spent', 'premium_notes_spent') then
     raise exception 'Unknown leaderboard.' using errcode = '22023';
   end if;
 
   return query
-    select p.id, p.display_name, p.profile_picture_url, count(*)::bigint as score
-    from public.profiles p
-    join public.comments c on c.user_id = p.user_id
-    join public.comment_reactions r on r.comment_id = c.id
-    where r.created_at >= v_start
-      and r.created_at <  v_end
-      and r.reaction = public.metric_reaction(p_metric)
-    group by p.id, p.display_name, p.profile_picture_url
-    having count(*) > 0
-    order by score desc, p.display_name asc nulls last
+    select p.id, p.display_name, p.profile_picture_url, t.score
+    from public.monthly_metric_tally(p_metric, v_start, v_end) t
+    join public.profiles p on p.id = t.profile_id
+    where t.score > 0
+    order by t.score desc, p.display_name asc nulls last
     limit v_limit;
 end;
 $fn$;
@@ -862,16 +969,15 @@ declare
   v_paid  integer;
   v_notes integer;
 begin
-  foreach m in array array['likes', 'funny', 'loves', 'dislikes'] loop
+  -- Every board pays, on the same scale. The two NOTES-spent boards are ranked
+  -- from the same monthly_metric_tally() the monthly board displays, so what
+  -- someone was shown all month is exactly what they are paid for.
+  foreach m in array array['likes', 'funny', 'loves', 'dislikes',
+                           'daily_notes_spent', 'premium_notes_spent'] loop
     with tallies as (
-      select p.id as profile_id, count(*)::bigint as score
-      from public.profiles p
-      join public.comments c on c.user_id = p.user_id
-      join public.comment_reactions r on r.comment_id = c.id
-      where r.created_at >= v_start
-        and r.created_at <  v_end
-        and r.reaction = public.metric_reaction(m)
-      group by p.id
+      select t.profile_id, t.score
+      from public.monthly_metric_tally(m, v_start, v_end) t
+      where t.score > 0
     ), ranked as (
       select profile_id,
              rank() over (order by score desc)::integer as rnk
@@ -1416,6 +1522,13 @@ begin
   values (p_cat_id, auth.uid(), btrim(p_body), v_premium)
   returning * into v_comment;
 
+  -- The dated half of the spend. The counters above answer "how many ever";
+  -- this answers "how many this month", which is what the monthly board ranks.
+  insert into public.notes_spend_log (profile_id, comment_id, kind, created_at)
+  values (v_profile.id, v_comment.id,
+          case when v_premium then 'premium' else 'daily' end,
+          v_comment.created_at);
+
   return v_comment;
 end;
 $fn$;
@@ -1530,6 +1643,11 @@ begin
     where id = v_profile.id;
   end if;
 
+  -- The NOTE went back to the wallet above, so its log row goes too --
+  -- otherwise this month's spend board would keep counting a NOTE the user is
+  -- holding again. Deleted rather than reversed, so no month can go negative.
+  delete from public.notes_spend_log where comment_id = p_comment_id;
+
   -- Reactions go with the comment. The FK is ON DELETE CASCADE so this is
   -- belt and braces, but doing it explicitly keeps the intent visible: the
   -- author's public totals must fall by exactly what this comment earned, in
@@ -1598,6 +1716,16 @@ begin
     group by user_id
   ) x
   where p.user_id = x.user_id;
+
+  -- Only the premium NOTES were refunded above, so only their log rows go.
+  -- The daily ones were not refunded and must keep counting -- which is why
+  -- notes_spend_log.comment_id is ON DELETE SET NULL: were it CASCADE, the
+  -- delete below would silently erase spends nobody was paid back for.
+  delete from public.notes_spend_log l
+  using public.comments c
+  where l.comment_id = c.id
+    and c.cat_id = p_cat_id
+    and c.used_premium_note;
 
   -- comments, ratings and (through comments) comment_reactions are all
   -- ON DELETE CASCADE from here.

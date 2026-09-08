@@ -12,14 +12,26 @@ export const BOARDS: { metric: LeaderboardMetric; tab: string; heading: string; 
   { metric: 'funny', tab: '\u{1F602} Funny', heading: 'Most funny received', unit: 'funny' },
   { metric: 'loves', tab: '❤️ Hearts', heading: 'Most hearts received', unit: 'hearts' },
   { metric: 'dislikes', tab: '\u{1F44E} Dislikes', heading: 'Most dislikes received', unit: 'dislikes' },
+  {
+    metric: 'daily_notes_spent',
+    tab: '\u{1F4DD} Daily spent',
+    heading: 'Most daily NOTES spent',
+    unit: 'daily',
+  },
+  {
+    metric: 'premium_notes_spent',
+    tab: '\u2728 Premium spent',
+    heading: 'Most premium NOTES spent',
+    unit: 'premium',
+  },
 ];
 
 /** Medal for the top three, plain number after that. */
 const RANKS = ['\u{1F947}', '\u{1F948}', '\u{1F949}'];
 
 const SCOPES: { scope: LeaderboardScope; label: string; blurb: string }[] = [
-  { scope: 'monthly', label: 'Monthly', blurb: 'Reactions received so far this month.' },
-  { scope: 'all-time', label: 'All Time', blurb: 'Every reaction ever received.' },
+  { scope: 'monthly', label: 'Monthly', blurb: 'So far this calendar month.' },
+  { scope: 'all-time', label: 'All Time', blurb: 'Everything, ever.' },
 ];
 
 /** Cache key: a board is a scope AND a metric, not one or the other. */
@@ -37,7 +49,7 @@ export default function LeaderboardTabs({
   const [scope, setScope] = useState<LeaderboardScope>(initialScope);
   const [metric, setMetric] = useState<LeaderboardMetric>(initialMetric);
   const [rows, setRows] = useState<LeaderboardRow[]>(initialRows);
-  // Cached per scope+metric so flipping between the eight boards stays instant.
+  // Cached per scope+metric so flipping between the twelve boards stays instant.
   const [cache, setCache] = useState<Record<string, LeaderboardRow[]>>({
     [keyOf(initialScope, initialMetric)]: initialRows,
   });
@@ -139,7 +151,7 @@ export default function LeaderboardTabs({
         ) : rows.length === 0 ? (
           <p className="py-6 text-center text-sm text-ink/45">
             {scope === 'monthly'
-              ? 'No reactions on this board yet this month — be the first.'
+              ? 'Nobody is on this board yet this month — be the first.'
               : 'Nobody is on this board yet — be the first.'}
           </p>
         ) : (
