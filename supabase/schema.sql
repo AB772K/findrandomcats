@@ -493,6 +493,9 @@ returns table (
   premium_comment_glow  boolean,
   premium_comment_font  text,
   display_title         text,
+  -- The percentile band of the displayed Title, so a comment can be coloured
+  -- by tier without a second lookup per row.
+  display_title_tier    smallint,
   shows_premium_title   boolean,
   is_mine               boolean,
   editable_until        timestamptz,
@@ -524,6 +527,12 @@ as $fn$
          -- An achievement title, once selected, rides on every comment the
          -- author writes -- daily or premium. It was earned, not bought.
          p.premium_display_title,
+         (select b.tier
+            from public.profile_badges b
+            join public.badge_titles t
+              on t.category = b.category and t.tier = b.tier
+           where b.profile_id = p.id and t.title = p.premium_display_title
+           limit 1),
          -- The Premium mark is different: it is not an achievement and is not
          -- selectable. It appears exactly when a comment was paid for with a
          -- premium NOTE, so it says something about this comment rather than
@@ -653,7 +662,8 @@ returns table (
   daily_notes_spent   integer,
   premium_notes_spent integer,
   rating_count        bigint,
-  display_title       text
+  display_title       text,
+  display_title_tier  smallint
 )
 language sql
 stable
@@ -669,7 +679,13 @@ as $fn$
          p.daily_notes_spent,
          p.premium_notes_spent,
          (select count(*) from public.ratings r where r.user_id = p.user_id),
-         p.premium_display_title
+         p.premium_display_title,
+         (select b.tier
+            from public.profile_badges b
+            join public.badge_titles t
+              on t.category = b.category and t.tier = b.tier
+           where b.profile_id = p.id and t.title = p.premium_display_title
+           limit 1)
   from public.profiles p
   where p.id = p_profile_id;
 $fn$;
@@ -1186,10 +1202,10 @@ alter table public.badge_history enable row level security;
 -- reconstructed -- inventing them from today's standings would be a fabricated
 -- record, not a recovered one. History starts at the next run of the job.
 
--- ------------------------------------------------ recompute every badge
--- Run monthly, not on every reaction: all-time rankings shift as other people
--- catch up, so a badge states where you stand as of the last settlement, and
--- recomputing it live would make titles flicker on and off.
+-- ------------------------------------------------ recompute every title
+-- Run monthly, not on every reaction: recomputing live would make titles
+-- appear mid-scroll. Titles are PERMANENT once earned -- this job grants and
+-- improves, never removes. See the upsert below for why.
 --
 -- Percentile is taken among profiles with at least one of that thing -- one
 -- reaction of that type, or one NOTE spent from that wallet -- so the
@@ -1240,27 +1256,32 @@ begin
       from ranked r
     ), qualified as (
       select profile_id, tier from tiered where tier is not null
-    ), pruned as (
-      -- Anyone who slipped out of the top 3% loses the badge. This is the
-      -- revocation half: all-time boards move as others catch up.
-      delete from public.profile_badges b
-      where b.category = cat
-        and not exists (select 1 from qualified q where q.profile_id = b.profile_id)
-      returning b.profile_id
     ), upserted as (
+      -- TITLES ARE PERMANENT. This job only ever grants or improves; it does
+      -- not take anything away.
+      --
+      -- There used to be a `pruned` step here deleting the badge of anyone who
+      -- had slipped out of the top 3%, on the reasoning that an all-time board
+      -- moves as other people catch up. That is now a deliberate reversal: a
+      -- title records that you once stood there, and standing there later
+      -- becomes harder as the site grows, so taking it back punishes people for
+      -- other users' activity rather than their own. Do not reinstate it.
+      --
+      -- `least` is what makes the upsert one-directional: tier 1 is the rarest,
+      -- so the smaller number wins and a drop from Top 1% to Top 3% leaves the
+      -- existing tier alone. Only an improvement restamps awarded_at, so
+      -- "held since" keeps meaning the day that tier was reached.
       insert into public.profile_badges (profile_id, category, tier)
       select q.profile_id, cat, q.tier from qualified q
       on conflict (profile_id, category) do update
-        set tier = excluded.tier,
-            -- Only restamp when the tier actually moved, so "held since" stays
-            -- meaningful for someone holding steady.
+        set tier = least(profile_badges.tier, excluded.tier),
             awarded_at = case
-                           when profile_badges.tier is distinct from excluded.tier
+                           when excluded.tier < profile_badges.tier
                            then now() else profile_badges.awarded_at
                          end
       returning profile_id
     )
-    select (select count(*)::integer from upserted), (select count(*)::integer from pruned)
+    select (select count(*)::integer from upserted), 0
     into v_granted, v_revoked;
 
     -- Snapshot the whole category, not just what changed: the question this
@@ -1290,17 +1311,16 @@ begin
     return query select cat, v_granted, v_revoked;
   end loop;
 
-  -- A title you no longer hold cannot stay on display. Runs once at the end
-  -- rather than per category, so it catches every revocation in one sweep.
-  update public.profiles p
-  set premium_display_title = null
-  where p.premium_display_title is not null
-    and not exists (
-      select 1
-      from public.profile_badges b
-      join public.badge_titles t on t.category = b.category and t.tier = b.tier
-      where b.profile_id = p.id and t.title = p.premium_display_title
-    );
+  -- The sweep that cleared a display title once its badge was revoked is gone
+  -- too: nothing here revokes any more, so a displayed title can no longer stop
+  -- being held. set_display_title() still checks the badge at the moment of
+  -- choosing, which is the only check now needed.
+  --
+  -- One caveat, deliberately kept: admin_set_profile_badge() can still remove a
+  -- title, and clears the display itself when it does. That is a human typing a
+  -- correction for a title granted in error -- the opposite of an automatic
+  -- job quietly taking one back -- and it is the escape hatch that was asked
+  -- for. Nothing automatic can reach it.
 end;
 $fn$;
 

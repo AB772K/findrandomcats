@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import TitleBadge from '@/components/TitleBadge';
 import { setDisplayTitle } from '@/lib/actions';
-import { TIER_LABELS, type ProfileTitle } from '@/lib/types';
+import { TIER_LABELS, TIER_NEON, type ProfileTitle } from '@/lib/types';
 
 /**
  * Picks which earned title to show beside your name. The list is exactly what
@@ -43,7 +43,7 @@ export default function TitlePicker({
   return (
     <section className="card space-y-4 p-6">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="font-display text-base font-semibold">Your titles</h2>
+        <h2 className="font-display text-base font-semibold">Your Titles</h2>
         <span className="chip">{titles.length ? `${titles.length} earned` : 'None yet'}</span>
       </div>
 
@@ -51,7 +51,7 @@ export default function TitlePicker({
         <p className="rounded-2xl border border-blush-100 bg-blush-50/60 px-4 py-3 text-xs text-ink/55">
           Titles are earned by finishing in the top 3% of a category, all time — the four
           reaction boards and the two NOTES-spent ones. They are recalculated once a month,
-          so keep collecting hearts, likes and laughs.
+          and once earned a Title is yours for good.
         </p>
       ) : (
         <>
@@ -75,7 +75,12 @@ export default function TitlePicker({
                         : 'border-blush-100 bg-paper hover:border-lilac-200'
                     }`}
                   >
-                    <span className="font-display text-sm font-semibold text-ink">{t.title}</span>
+                    <span
+                      className="font-display text-sm font-semibold"
+                      style={{ color: TIER_NEON[t.tier].color, textShadow: TIER_NEON[t.tier].glow }}
+                    >
+                      {t.title}
+                    </span>
                     <span className="text-[11px] text-ink/50">
                       {t.label} · {TIER_LABELS[t.tier]}
                     </span>
@@ -97,7 +102,10 @@ export default function TitlePicker({
             <span className="text-xs text-ink/45">
               {current ? (
                 <>
-                  Displaying <TitleBadge>{current}</TitleBadge>
+                  Displaying{' '}
+                  <TitleBadge tier={titles.find((t) => t.title === current)?.tier ?? null}>
+                    {current}
+                  </TitleBadge>
                 </>
               ) : (
                 'No title on display.'

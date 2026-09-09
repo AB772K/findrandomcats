@@ -10,6 +10,7 @@ import { createClient, getSessionUser } from '@/lib/supabase/server';
 import {
   REACTIONS,
   TIER_LABELS,
+  TIER_NEON,
   type Cat,
   type ProfileTitle,
   type ProfileTitleHistoryRow,
@@ -145,7 +146,10 @@ export default async function PublicProfilePage({
             <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-start">
               <h1 className="font-display text-2xl font-bold tracking-tight">{name}</h1>
               {profile.display_title ? (
-                <TitleBadge title={`Earned title: ${profile.display_title}`}>
+                <TitleBadge
+                  tier={profile.display_title_tier}
+                  title={`Earned Title: ${profile.display_title}`}
+                >
                   {profile.display_title}
                 </TitleBadge>
               ) : null}
@@ -171,7 +175,7 @@ export default async function PublicProfilePage({
       {titles.length > 0 ? (
         <section className="card p-5">
           <div className="mb-3 flex items-baseline justify-between gap-3">
-            <h2 className="font-display text-base font-semibold">Titles earned</h2>
+            <h2 className="font-display text-base font-semibold">Titles</h2>
             <span className="text-xs text-ink/45">
               {titles.length} of 6 categories
             </span>
@@ -182,7 +186,12 @@ export default async function PublicProfilePage({
                 key={`${t.category}-${t.tier}`}
                 className="flex items-center gap-2 rounded-full border border-blush-100 bg-blush-50/60 px-3 py-1.5"
               >
-                <span className="font-display text-sm font-semibold text-ink">{t.title}</span>
+                <span
+                  className="font-display text-sm font-semibold"
+                  style={{ color: TIER_NEON[t.tier].color, textShadow: TIER_NEON[t.tier].glow }}
+                >
+                  {t.title}
+                </span>
                 <span className="text-[11px] text-ink/50">
                   {t.label} · {TIER_LABELS[t.tier]}
                 </span>
@@ -190,7 +199,7 @@ export default async function PublicProfilePage({
             ))}
           </ul>
           <p className="mt-3 text-[11px] text-ink/40">
-            Recalculated monthly from all-time standings.
+            Earned by finishing in the top 3% of a category, all time. Once earned, kept for good.
           </p>
         </section>
       ) : null}

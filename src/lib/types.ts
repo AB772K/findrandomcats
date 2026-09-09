@@ -58,6 +58,7 @@ export type PublicProfile = {
   premium_notes_spent: number;
   rating_count: number;
   display_title: string | null;
+  display_title_tier: 1 | 2 | 3 | null;
 };
 
 /** Lifetime reactions a profile has RECEIVED, from profile_reaction_totals(). */
@@ -101,6 +102,24 @@ export const TIER_LABELS: Record<number, string> = {
   1: 'Top 1%',
   2: 'Top 2%',
   3: 'Top 3%',
+};
+
+/**
+ * One neon per tier, borrowed from the premium-glow language so a title reads
+ * as the same family of thing rather than a new one.
+ *
+ * `glow` is a text-shadow rather than a box-shadow: a title often sits INSIDE a
+ * premium comment that is already glowing at the box level, and two box glows
+ * layered on each other turn to mush. Lighting the letters instead stays legible
+ * on top of one.
+ *
+ * Rarest is warmest: tier 1 is the gold nobody else has, and cools through
+ * cyan to violet as the tier widens.
+ */
+export const TIER_NEON: Record<number, { color: string; glow: string }> = {
+  1: { color: '#ffcf3d', glow: '0 0 6px rgba(255,207,61,.85), 0 0 14px rgba(255,170,0,.45)' },
+  2: { color: '#3ddbff', glow: '0 0 6px rgba(61,219,255,.85), 0 0 14px rgba(0,170,255,.4)' },
+  3: { color: '#c17dff', glow: '0 0 6px rgba(193,125,255,.8), 0 0 14px rgba(150,80,255,.35)' },
 };
 
 /** Used when a premium commenter has not picked a colour. */
@@ -183,8 +202,10 @@ export type CommentRow = {
   premium_comment_color: string | null;
   premium_comment_glow: boolean;
   premium_comment_font: string | null;
-  /** The author's selected achievement title, on every comment they write. */
+  /** The author's selected Title, on every comment they write. */
   display_title: string | null;
+  /** Its percentile band, so the Title can be drawn in its tier's neon. */
+  display_title_tier: 1 | 2 | 3 | null;
   /** True when this comment was paid for with a premium NOTE. */
   shows_premium_title: boolean;
   like_count: number;

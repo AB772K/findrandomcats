@@ -216,7 +216,10 @@ export default function CommentItem({
                   actually paid for. Filled vs outlined so both can sit here
                   together without competing. */}
               {comment.display_title ? (
-                <TitleBadge title={`Earned title: ${comment.display_title}`}>
+                <TitleBadge
+                  tier={comment.display_title_tier}
+                  title={`Earned Title: ${comment.display_title}`}
+                >
                   {comment.display_title}
                 </TitleBadge>
               ) : null}

@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { TIER_LABELS, type ProfileTitleHistoryRow } from '@/lib/types';
+import { TIER_LABELS, TIER_NEON, type ProfileTitleHistoryRow } from '@/lib/types';
 
 /** How many months show before the list asks to be expanded. */
 const VISIBLE_MONTHS = 6;
@@ -68,7 +68,12 @@ export default function TitleHistory({ rows }: { rows: ProfileTitleHistoryRow[] 
                   key={`${t.category}-${t.period}`}
                   className="flex items-center gap-2 rounded-full border border-lilac-200 bg-lilac-50/70 px-3 py-1"
                 >
-                  <span className="font-display text-sm font-semibold text-ink">{t.title}</span>
+                  <span
+                    className="font-display text-sm font-semibold"
+                    style={{ color: TIER_NEON[t.tier].color, textShadow: TIER_NEON[t.tier].glow }}
+                  >
+                    {t.title}
+                  </span>
                   <span className="text-[11px] text-ink/50">
                     {t.label} · {TIER_LABELS[t.tier]}
                   </span>
