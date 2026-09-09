@@ -19,6 +19,8 @@ import type {
   NoteKind,
   NotesWallet,
   ProfileTitle,
+  ProfileBadge,
+  ProfileBadgeHistoryRow,
   ProfileTitleHistoryRow,
   ReactionKind,
   ReactionState,
@@ -708,6 +710,28 @@ export async function fetchProfileTitleHistory(
   });
   if (error) return [];
   return (data ?? []) as ProfileTitleHistoryRow[];
+}
+
+/**
+ * The Badges a profile holds right now. Recomputed on every call by design --
+ * a Badge is a live standing, so a stale one would be a lie the moment someone
+ * overtakes its holder.
+ */
+export async function fetchProfileBadges(profileId: string): Promise<ProfileBadge[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc('profile_badges_now', { p_profile_id: profileId });
+  if (error) return [];
+  return (data ?? []) as ProfileBadge[];
+}
+
+/** Badges still held when a month was settled, and therefore paid. Permanent. */
+export async function fetchProfileBadgeHistory(
+  profileId: string,
+): Promise<ProfileBadgeHistoryRow[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase.rpc('profile_badge_history', { p_profile_id: profileId });
+  if (error) return [];
+  return (data ?? []) as ProfileBadgeHistoryRow[];
 }
 
 export type SetTitleResult = { ok: true; title: string | null } | { ok: false; error: string };

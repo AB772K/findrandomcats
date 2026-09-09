@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import Avatar from '@/components/Avatar';
 import DeleteCatButton from '@/components/DeleteCatButton';
 import TitleBadge from '@/components/TitleBadge';
+import BadgeList from '@/components/BadgeCard';
 import TitleHistory from '@/components/TitleHistory';
 import SuccessToast from '@/components/SuccessToast';
 import { displayNameOf } from '@/lib/avatar';
@@ -13,6 +14,8 @@ import {
   TIER_NEON,
   type Cat,
   type ProfileTitle,
+  type ProfileBadge,
+  type ProfileBadgeHistoryRow,
   type ProfileTitleHistoryRow,
   type PublicProfile,
   type RatingTally,
@@ -66,6 +69,8 @@ export default async function PublicProfilePage({
     viewer,
     titlesResult,
     historyResult,
+    badgesResult,
+    badgeHistoryResult,
   ] = await Promise.all([
     supabase.rpc('public_profile', { p_profile_id: params.id }),
     supabase.rpc('profile_rating_summary', { p_profile_id: params.id }),
@@ -81,6 +86,8 @@ export default async function PublicProfilePage({
     getSessionUser().then((user) => ({ data: { user } })),
     supabase.rpc('profile_titles', { p_profile_id: params.id }),
     supabase.rpc('profile_title_history', { p_profile_id: params.id }),
+    supabase.rpc('profile_badges_now', { p_profile_id: params.id }),
+    supabase.rpc('profile_badge_history', { p_profile_id: params.id }),
   ]);
 
   const profile = (profileResult.data as PublicProfile[] | null)?.[0];
@@ -98,6 +105,8 @@ export default async function PublicProfilePage({
   const uploads = (uploadsResult.data ?? []) as Cat[];
   const titles = (titlesResult.data ?? []) as ProfileTitle[];
   const history = (historyResult.data ?? []) as ProfileTitleHistoryRow[];
+  const badges = (badgesResult.data ?? []) as ProfileBadge[];
+  const badgeHistory = (badgeHistoryResult.data ?? []) as ProfileBadgeHistoryRow[];
   const name = displayNameOf(profile.display_name);
 
   const totals = ((reactionsResult.data as ReactionTotals[] | null)?.[0] ?? {
@@ -205,8 +214,41 @@ export default async function PublicProfilePage({
       ) : null}
 
       {/* Separate from the section above on purpose: that one answers what they
-          hold, this one what they have held. A title can be in both. */}
+          hold, this one what they have held. A Title can be in both. */}
       <TitleHistory rows={history} />
+
+      {/* Badges are a different thing from Titles and sit in their own section:
+          a live top-three standing on this month's board, which someone can take
+          from you before the month ends. Omitted entirely when there are none --
+          an empty scoreboard on a new profile reads as failure rather than as a
+          blank slate. */}
+      {badges.length > 0 ? (
+        <section className="card p-5">
+          <div className="mb-3 flex items-baseline justify-between gap-3">
+            <h2 className="font-display text-base font-semibold">Badges</h2>
+            <span className="text-xs text-ink/45">Top 3 this month</span>
+          </div>
+          <BadgeList badges={badges} owner={name} />
+          <p className="mt-3 text-[11px] text-ink/40">
+            Held right now. Badges change hands the moment someone overtakes you.
+          </p>
+        </section>
+      ) : null}
+
+      {badgeHistory.length > 0 ? (
+        <section className="card p-5">
+          <div className="mb-3 flex items-baseline justify-between gap-3">
+            <h2 className="font-display text-base font-semibold">Badge history</h2>
+            <span className="text-xs text-ink/45">
+              {badgeHistory.length} {badgeHistory.length === 1 ? 'badge' : 'badges'}
+            </span>
+          </div>
+          <BadgeList badges={badgeHistory} owner={name} />
+          <p className="mt-3 text-[11px] text-ink/40">
+            Badges still held when a month closed, and paid out for it.
+          </p>
+        </section>
+      ) : null}
 
       <section className="card p-5">
         <h2 className="mb-3 font-display text-base font-semibold">Reactions received</h2>

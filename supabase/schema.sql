@@ -1080,6 +1080,23 @@ begin
     into v_paid, v_notes
     from credited;
 
+    -- The badge for this metric is settled at the same instant it is paid.
+    -- Ranked from the same window the prizes came from, so the holder recorded
+    -- here is exactly the holder who was paid -- and someone who held the badge
+    -- earlier in the month and lost it before now gets nothing, which is the
+    -- whole point of a badge being live and stealable.
+    insert into public.monthly_badge_history (profile_id, metric, rank, score, period)
+    select r.profile_id, m, r.rnk, r.score, v_period
+    from (
+      select t.profile_id,
+             t.score,
+             rank() over (order by t.score desc)::integer as rnk
+      from public.monthly_metric_tally(m, v_start, v_end) t
+      where t.score > 0
+    ) r
+    where r.rnk <= public.badge_rank_limit()
+    on conflict (profile_id, metric, period) do nothing;
+
     return query select m, v_paid, v_notes;
   end loop;
 
@@ -1380,6 +1397,106 @@ as $fn$
 $fn$;
 
 grant execute on function public.profile_title_history(uuid) to anon, authenticated;
+
+-- ========================================================= badges (live) ==
+-- A BADGE IS NOT A TITLE. Two systems, deliberately separate:
+--
+--   Title  -- all-time percentile, permanent once earned, chosen for display.
+--            Stored in profile_badges / badge_history. Those names predate this
+--            section and are left alone: renaming them would touch every
+--            function in this file for no user-visible gain.
+--   Badge  -- a top-three place on THIS MONTH's leaderboard. Not stored at all
+--            while the month is running: it is computed live, so it changes
+--            hands the moment someone overtakes you. That is the point of it.
+--
+-- WHY TOP THREE. It has to be scarce enough to be worth taking. Top ten across
+-- six metrics would put sixty people in badges at once, which is a
+-- participation list rather than a standing; top three gives eighteen holders
+-- site-wide, and maps onto a podium people already understand.
+create or replace function public.badge_rank_limit()
+returns integer language sql immutable as $fn$ select 3 $fn$;
+
+grant execute on function public.badge_rank_limit() to anon, authenticated;
+
+-- Who holds a badge on one metric right now. Live, not a snapshot: every call
+-- re-ranks the current month, so overtaking someone takes their badge away in
+-- the same instant it gives you one.
+create or replace function public.current_badge_holders(p_metric text)
+returns table (profile_id uuid, rank integer, score bigint)
+language sql
+stable
+security definer
+set search_path = public
+as $fn$
+  select r.profile_id, r.rnk, r.score
+  from (
+    select t.profile_id,
+           t.score,
+           rank() over (order by t.score desc)::integer as rnk
+    from public.monthly_metric_tally(
+           p_metric,
+           date_trunc('month', now()),
+           date_trunc('month', now()) + interval '1 month') t
+    where t.score > 0
+  ) r
+  where r.rnk <= public.badge_rank_limit();
+$fn$;
+
+grant execute on function public.current_badge_holders(text) to anon, authenticated;
+
+-- Every badge one profile currently holds, across all six metrics.
+create or replace function public.profile_badges_now(p_profile_id uuid)
+returns table (metric text, rank integer, score bigint)
+language sql
+stable
+security definer
+set search_path = public
+as $fn$
+  select m.metric, h.rank, h.score
+  from unnest(array['likes','funny','loves','dislikes',
+                    'daily_notes_spent','premium_notes_spent']) as m(metric)
+  cross join lateral public.current_badge_holders(m.metric) h
+  where h.profile_id = p_profile_id
+  order by h.rank, m.metric;
+$fn$;
+
+grant execute on function public.profile_badges_now(uuid) to anon, authenticated;
+
+-- ------------------------------------------------------- badge history
+-- The permanent half. A badge held mid-month and lost before settlement leaves
+-- no trace anywhere -- only whoever holds it when the month is settled gets a
+-- row here, and that is the same moment they are paid for it. Same write-once
+-- guarantee as Title history: ON CONFLICT DO NOTHING, so re-running a
+-- settlement cannot rewrite what a past month said.
+create table if not exists public.monthly_badge_history (
+  profile_id  uuid        not null references public.profiles (id) on delete cascade,
+  metric      text        not null,
+  rank        integer     not null,
+  score       bigint      not null,
+  period      date        not null,
+  recorded_at timestamptz not null default now(),
+  primary key (profile_id, metric, period)
+);
+
+create index if not exists monthly_badge_history_profile_idx
+  on public.monthly_badge_history (profile_id, period desc);
+
+alter table public.monthly_badge_history enable row level security;
+
+create or replace function public.profile_badge_history(p_profile_id uuid)
+returns table (metric text, rank integer, score bigint, period date, recorded_at timestamptz)
+language sql
+stable
+security definer
+set search_path = public
+as $fn$
+  select h.metric, h.rank, h.score, h.period, h.recorded_at
+  from public.monthly_badge_history h
+  where h.profile_id = p_profile_id
+  order by h.period desc, h.rank asc, h.metric asc;
+$fn$;
+
+grant execute on function public.profile_badge_history(uuid) to anon, authenticated;
 
 -- ==================================================== admin corrections ==
 -- WHY THIS EXISTS, AND WHY IT IS NOT A HOLE IN THE PROTECTION ABOVE.

@@ -166,6 +166,43 @@ export type LeaderboardMetric =
   | 'daily_notes_spent'
   | 'premium_notes_spent';
 
+/**
+ * A Badge: a top-three place on THIS month's leaderboard. Live, so it changes
+ * hands the moment someone overtakes you -- unlike a Title, which is all-time
+ * and permanent once earned.
+ */
+export type ProfileBadge = {
+  metric: LeaderboardMetric;
+  rank: number;
+  score: number;
+};
+
+/** A Badge that was still held when a month was settled, and so was paid. */
+export type ProfileBadgeHistoryRow = ProfileBadge & {
+  period: string;
+  recorded_at: string;
+};
+
+/** Human names for the six boards, shared by the profile and the leaderboard. */
+export const METRIC_LABELS: Record<LeaderboardMetric, string> = {
+  likes: 'Likes',
+  funny: 'Funny',
+  loves: 'Hearts',
+  dislikes: 'Dislikes',
+  daily_notes_spent: 'Daily NOTES spent',
+  premium_notes_spent: 'Premium NOTES spent',
+};
+
+/** Podium treatment for the three badge ranks. */
+export const BADGE_RANKS: Record<number, { label: string; medal: string; color: string; glow: string }> = {
+  1: { label: '1st', medal: '\u{1F947}', color: '#ffd75e', glow: '0 0 8px rgba(255,215,94,.8)' },
+  2: { label: '2nd', medal: '\u{1F948}', color: '#d7dee8', glow: '0 0 8px rgba(215,222,232,.7)' },
+  3: { label: '3rd', medal: '\u{1F949}', color: '#e0a06a', glow: '0 0 8px rgba(224,160,106,.7)' },
+};
+
+/** How many ranks per board earn a Badge. Mirrors badge_rank_limit() in SQL. */
+export const BADGE_RANK_LIMIT = 3;
+
 /** Which window a board covers. Monthly is the current calendar month. */
 export type LeaderboardScope = 'monthly' | 'all-time';
 
