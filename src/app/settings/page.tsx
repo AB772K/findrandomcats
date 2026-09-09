@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import SettingsForm from '@/app/settings/SettingsForm';
+import PasswordSection from '@/app/settings/PasswordSection';
 import TitlePicker from '@/app/settings/TitlePicker';
 import { fetchProfileTitles, getMyProfile } from '@/lib/actions';
 import { createClient, getSessionUser } from '@/lib/supabase/server';
@@ -44,6 +45,13 @@ export default async function SettingsPage() {
       {/* Its own card and its own action: titles are earned, not edited, so
           picking one is a different gesture from saving your bio. */}
       <TitlePicker titles={titles} selected={profile?.premium_display_title ?? null} />
+
+      {/* An account with only a Google identity has no password to change, so
+          it is offered one to set instead. changePassword() re-derives this
+          from the identities itself -- this only decides what to ask for. */}
+      <PasswordSection
+        hasPassword={(user.identities ?? []).some((i) => i.provider === 'email')}
+      />
 
       {row?.id ? (
         <p className="text-center text-sm">

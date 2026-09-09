@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { createClient, getSessionUser } from '@/lib/supabase/server';
+import { createClient, createStatelessClient, getSessionUser } from '@/lib/supabase/server';
 import { NO_CAT_MESSAGE, UNAVAILABLE_MESSAGE, detectCat } from '@/lib/cat-detector';
 import { findNotePackage } from '@/lib/notes';
 import { isPremiumFontKey } from '@/app/fonts/premium';
@@ -433,6 +433,62 @@ export async function fetchLeaderboard(
 }
 
 /* ----------------------------------------------------------------- profile */
+
+export type ChangePasswordResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * Changes the signed-in user's password, after proving they know the current one.
+ *
+ * updateUser({ password }) does NOT re-verify anything -- it will happily set a
+ * new password for whoever holds the session. On a shared or walked-away-from
+ * browser that turns a borrowed tab into a permanent takeover, so the current
+ * password is checked first, here, where the client cannot skip it.
+ *
+ * The check is a sign-in attempt on a SEPARATE client that persists nothing.
+ * Doing it on the request's own client would overwrite the session cookies
+ * mid-request, and a wrong guess would then sign the user out of the page they
+ * are standing on.
+ *
+ * An account with no password at all -- Google-only -- has nothing to prove, so
+ * it sets one instead. Being signed in is the whole of the proof available in
+ * that case, and refusing would leave them with no way to ever have one.
+ */
+export async function changePassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<ChangePasswordResult> {
+  if (newPassword.length < 6) return { ok: false, error: 'Use at least 6 characters.' };
+
+  const supabase = createClient();
+  const user = await getSessionUser();
+  if (!user?.email) return { ok: false, error: 'Sign in first.' };
+
+  const hasPassword = (user.identities ?? []).some((i) => i.provider === 'email');
+
+  if (hasPassword) {
+    if (!currentPassword) return { ok: false, error: 'Enter your current password.' };
+    if (currentPassword === newPassword) {
+      return { ok: false, error: 'That is already your password.' };
+    }
+
+    const { error: wrong } = await createStatelessClient().auth.signInWithPassword({
+      email: user.email,
+      password: currentPassword,
+    });
+    if (wrong) {
+      // Rate limiting is about the attempt, not the password, so say which.
+      if (/rate limit|too many/i.test(wrong.message)) {
+        return { ok: false, error: 'Too many attempts just now. Try again in a few minutes.' };
+      }
+      return { ok: false, error: 'That current password is not right.' };
+    }
+  }
+
+  const { error } = await supabase.auth.updateUser({ password: newPassword });
+  if (error) return { ok: false, error: error.message };
+
+  return { ok: true };
+}
 
 export type SaveProfileResult =
   | { ok: true }

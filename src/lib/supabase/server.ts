@@ -65,3 +65,17 @@ export async function getSessionUser() {
     return null;
   }
 }
+
+/**
+ * A client that reads and writes no cookies at all.
+ *
+ * For checking a password without becoming signed in as a side effect: a
+ * sign-in attempt on the request's own client would rewrite the session cookies
+ * mid-request, so a wrong guess would sign the user out of the page they are
+ * standing on, and a right one would pointlessly rotate their session.
+ */
+export function createStatelessClient() {
+  return createServerClient(SUPABASE_URL(), SUPABASE_ANON_KEY(), {
+    cookies: { getAll: () => [], setAll: () => {} },
+  });
+}
