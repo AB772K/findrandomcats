@@ -287,6 +287,12 @@ create policy "profiles: read own" on public.profiles
 -- So writes are revoked at the grant level as well as the policy level. Two
 -- locks rather than one, because a future policy added without the grants in
 -- mind should not silently reopen this.
+-- The policy is dropped as well as the grants. An earlier pass revoked the
+-- grants but left "profiles: update own" in place, inert; an audit found it
+-- still listed in pg_policies. Inert is not gone, and a later grant would have
+-- woken it up.
+drop policy if exists "profiles: update own" on public.profiles;
+
 revoke insert, update, delete, truncate, references
   on public.profiles from anon, authenticated;
 
@@ -295,10 +301,26 @@ drop policy if exists "cats: public read" on public.cats;
 create policy "cats: public read" on public.cats
   for select using (true);
 
+-- The insert policy is the one place a signed-in client still writes a table
+-- directly, so it carries the whole weight. It used to check only that
+-- uploaded_by was your own profile, which left the row itself forgeable: an
+-- audit inserted a cat straight through PostgREST with an arbitrary image_url
+-- and source_type = 'cat_api', never going near uploadCat() and so never
+-- meeting the cat detector that is supposed to be impossible to skip.
+--
+-- It cannot be made airtight from here -- the detector runs in Node, not in
+-- Postgres, and anything reachable from the client is reachable without the
+-- app. What it CAN do is stop the row being a lie: the image must live in this
+-- project's own cat-photos bucket under the uploader's own user id, so a cat
+-- row can only ever point at a file that user actually uploaded, and it must
+-- be marked user_upload rather than dressed up as seeded cat_api content.
 drop policy if exists "cats: authenticated insert" on public.cats;
 create policy "cats: authenticated insert" on public.cats
   for insert to authenticated
   with check (
+    source_type = 'user_upload'
+    and image_url like '%/storage/v1/object/public/cat-photos/' || auth.uid()::text || '/%'
+    and
     uploaded_by in (select id from public.profiles where user_id = auth.uid())
   );
 
@@ -318,9 +340,12 @@ create policy "ratings: update own" on public.ratings
   for update to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- comments: any signed-in user may read them; you may only remove your own.
+-- Retired. It was `using (true)`, which let any signed-in client read every
+-- comment row including its user_id -- while cat_comments() deliberately
+-- returns author_id, a profiles.id, precisely so that link is not handed out.
+-- The direct read gave back what the function was shaped to withhold, and
+-- nothing in src/ ever used it: comments are read through cat_comments().
 drop policy if exists "comments: authenticated read" on public.comments;
-create policy "comments: authenticated read" on public.comments
-  for select to authenticated using (true);
 
 -- There is deliberately no DELETE policy any more. Deleting now refunds a NOTE,
 -- and that refund has to happen in the same transaction as the delete, so
@@ -2228,3 +2253,49 @@ drop policy if exists "avatars: owner update" on storage.objects;
 create policy "avatars: owner update" on storage.objects
   for update to authenticated
   using (bucket_id = 'avatars' and (storage.foldername(name))[1] = auth.uid()::text);
+
+
+-- ============================================== table grants (the second lock)
+-- Supabase grants anon and authenticated full DML on every table in public by
+-- default, leaving RLS as the only thing in the way. That was enough everywhere
+-- except profiles, where a matching policy existed -- and the pair let a
+-- signed-in user set their own premium_notes_balance to 9999.
+--
+-- Every other table was then audited as a real signed-in user, measuring rows
+-- actually changed rather than trusting an errorless reply: a write blocked by
+-- RLS matches zero rows and reports success, which reads exactly like a write
+-- that worked. RLS was genuinely holding all of them shut.
+--
+-- The grants are narrowed regardless, to precisely what src/ does. This is the
+-- second lock: a policy added later without the grants in mind should not be
+-- able to open a table the way it did on profiles. The application writes two
+-- tables directly -- cats and ratings -- and reaches everything else through
+-- security-definer functions, which run as the owner and are unaffected by any
+-- grant here.
+--
+-- This block must stay LAST in the file. Default privileges re-grant anon and
+-- authenticated as each table is created, so a revoke placed earlier is undone
+-- by every table defined after it.
+revoke insert, update, delete, truncate, references
+  on all tables in schema public from anon, authenticated;
+
+-- uploadCat() inserts exactly these four columns. Column-level rather than
+-- table-level, so id, created_at and view_count cannot be supplied by the
+-- client -- a forged view_count would otherwise ride in on the same request.
+grant insert (image_url, source_type, caption, uploaded_by)
+  on public.cats to authenticated;
+
+-- rateCat() upserts exactly these three.
+grant insert (cat_id, user_id, stars) on public.ratings to authenticated;
+grant update (cat_id, user_id, stars) on public.ratings to authenticated;
+
+-- Reads: the three tables the app selects from directly, plus badge_titles,
+-- which is deliberately public -- people should be able to see what is out
+-- there to earn. Everything else is read through a security-definer function
+-- that returns a shaped result, so a table grant would only widen what a client
+-- can ask for.
+revoke select on all tables in schema public from anon, authenticated;
+grant select on public.profiles     to anon, authenticated;
+grant select on public.cats         to anon, authenticated;
+grant select on public.ratings      to anon, authenticated;
+grant select on public.badge_titles to anon, authenticated;
