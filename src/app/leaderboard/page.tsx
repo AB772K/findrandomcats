@@ -1,6 +1,8 @@
 import Link from 'next/link';
 import LeaderboardTabs from '@/app/leaderboard/LeaderboardTabs';
 import { fetchLeaderboard } from '@/lib/actions';
+import type { TitleRow } from '@/app/leaderboard/RewardsPanel';
+import { createClient } from '@/lib/supabase/server';
 
 export const metadata = { title: 'Leaderboard · FindRandomCats' };
 
@@ -19,6 +21,12 @@ export default async function LeaderboardPage() {
   // Monthly opens first: it is the board with something at stake.
   const rows = await fetchLeaderboard('likes', 'monthly');
 
+  // badge_titles is deliberately world-readable -- what is out there to earn is
+  // public knowledge -- so the panel can name every Title without a function.
+  const { data: titleRows } = await createClient()
+    .from('badge_titles')
+    .select('category, tier, title');
+
   return (
     <div className="mx-auto max-w-xl animate-fade-up space-y-6">
       <div className="space-y-1 text-center">
@@ -30,7 +38,12 @@ export default async function LeaderboardPage() {
         </p>
       </div>
 
-      <LeaderboardTabs initialScope="monthly" initialMetric="likes" initialRows={rows} />
+      <LeaderboardTabs
+        initialScope="monthly"
+        initialMetric="likes"
+        initialRows={rows}
+        titles={(titleRows ?? []) as TitleRow[]}
+      />
 
       <p className="text-center text-xs text-ink/40">
         Rankings are aggregate only — names, avatars and one number each.

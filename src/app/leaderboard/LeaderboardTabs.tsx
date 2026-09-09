@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useState, useTransition } from 'react';
 import Avatar from '@/components/Avatar';
+import RewardsPanel, { type TitleRow } from '@/app/leaderboard/RewardsPanel';
 import { fetchLeaderboard } from '@/lib/actions';
 import { displayNameOf } from '@/lib/avatar';
 import type { LeaderboardMetric, LeaderboardRow, LeaderboardScope } from '@/lib/types';
@@ -41,10 +42,13 @@ export default function LeaderboardTabs({
   initialScope,
   initialMetric,
   initialRows,
+  titles,
 }: {
   initialScope: LeaderboardScope;
   initialMetric: LeaderboardMetric;
   initialRows: LeaderboardRow[];
+  /** Every Title name, for the All Time half of the rewards panel. */
+  titles: TitleRow[];
 }) {
   const [scope, setScope] = useState<LeaderboardScope>(initialScope);
   const [metric, setMetric] = useState<LeaderboardMetric>(initialMetric);
@@ -110,6 +114,8 @@ export default function LeaderboardTabs({
           {scope === 'monthly' ? ` (${monthLabel})` : null}
         </p>
       </div>
+
+      <RewardsPanel scope={scope} titles={titles} />
 
       <div role="tablist" aria-label="Leaderboards" className="flex flex-wrap gap-1.5">
         {BOARDS.map((board) => {
