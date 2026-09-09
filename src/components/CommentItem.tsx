@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Avatar from '@/components/Avatar';
 import TitleBadge from '@/components/TitleBadge';
 import { displayNameOf } from '@/lib/avatar';
@@ -79,7 +79,22 @@ export default function CommentItem({
   // offering something it knows will be rejected.
   const canReact = signedIn && !comment.is_mine;
 
+  /** Five seconds from the first tap; later taps inside that window are ignored. */
+  function showOwnNotice() {
+    if (Date.now() < noticeUntil.current) return;
+    noticeUntil.current = Date.now() + 5000;
+    setOwnNotice(true);
+    setTimeout(() => setOwnNotice(false), 5000);
+  }
+
   async function react(kind: ReactionKind) {
+    // Your own comment: the button stays inert, but tapping it now says why
+    // rather than doing nothing at all. The server refuses this too --
+    // set_comment_reaction() is the actual rule, this is only the explanation.
+    if (comment.is_mine) {
+      showOwnNotice();
+      return;
+    }
     if (!canReact || reacting) return;
     setReacting(true);
     setError(null);
@@ -88,6 +103,13 @@ export default function CommentItem({
     if (typeof result === 'string') setError(result);
     else setReactions(result);
   }
+
+  // Shown when someone taps the reaction bar on their own comment. Held for a
+  // fixed window and NOT restarted by further taps inside it -- a toast that
+  // re-arms on every click never finishes leaving, which reads as a stuck
+  // element rather than a message.
+  const [ownNotice, setOwnNotice] = useState(false);
+  const noticeUntil = useRef(0);
 
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(comment.body);
@@ -269,7 +291,12 @@ export default function CommentItem({
                 key={kind}
                 type="button"
                 onClick={() => react(kind)}
-                disabled={!canReact || reacting}
+                // aria-disabled rather than disabled for your own comment: a
+                // disabled button fires no click, so the notice could never be
+                // triggered. It stays unusable either way -- react() returns
+                // immediately, and the server refuses regardless.
+                disabled={comment.is_mine ? false : !canReact || reacting}
+                aria-disabled={comment.is_mine || undefined}
                 aria-pressed={mine}
                 title={
                   comment.is_mine
@@ -305,6 +332,15 @@ export default function CommentItem({
             );
           })}
         </div>
+
+        {ownNotice ? (
+          <p
+            role="status"
+            className="mt-1.5 inline-flex items-center gap-1.5 rounded-full border border-lilac-200 bg-lilac-50 px-3 py-1 text-[11px] font-medium text-ink/70"
+          >
+            You can’t react to your own comment
+          </p>
+        ) : null}
 
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 pl-4 text-[11px] text-ink/40">
           <span>{new Date(comment.created_at).toLocaleString()}</span>

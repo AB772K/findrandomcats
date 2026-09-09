@@ -33,14 +33,18 @@ export default async function SettingsPage() {
         </p>
       </div>
 
-      {/* Two accounts on this site means two different email addresses -- the
-          same address cannot be registered twice. Showing which one you are
-          signed in as is what makes that visible rather than mysterious. */}
-      <p className="text-center text-xs text-ink/45">
-        Signed in as <span className="font-medium text-ink/70">{user.email}</span>
-      </p>
-
-      <SettingsForm profile={profile} />
+      {/* A profile row always exists for a signed-in account, so null here means
+          the read failed rather than "nothing set". Saying so beats rendering an
+          empty form: saving from one writes the blanks back and wipes whatever
+          name and bio they actually had. */}
+      {profile ? (
+        <SettingsForm profile={profile} />
+      ) : (
+        <p className="card p-6 text-center text-sm text-ink/60">
+          We could not load your profile just now. Reload the page rather than
+          filling this in again — an empty form would overwrite what you have.
+        </p>
+      )}
 
       {/* Its own card and its own action: titles are earned, not edited, so
           picking one is a different gesture from saving your bio. */}

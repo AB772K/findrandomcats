@@ -1704,6 +1704,47 @@ drop function if exists public.update_my_profile(text, text, text, text, boolean
 -- rather than "already exists with same argument types".
 drop function if exists public.update_my_profile(text, text, text, text, boolean, text);
 
+-- ------------------------------------------------ the moderation backstop
+-- src/lib/moderation.ts is the fuller filter and runs in the server action, but
+-- update_my_profile() is granted to authenticated and so is callable directly:
+-- a hand-rolled RPC call skips every check the action makes. Verified, not
+-- assumed -- a probe set a bio to a threat straight through the RPC.
+--
+-- This is the boundary copy: the severe categories only -- self-harm, threats
+-- at a person, slurs -- because those are the ones that must not survive a
+-- bypass. Ordinary swearing stays in the JavaScript filter, where a false
+-- positive costs nothing worse than a reworded sentence. The two are allowed to
+-- differ; this one is the floor.
+create or replace function public.is_harmful_text(p_text text)
+returns boolean
+language sql
+immutable
+as $fn$
+  select case
+    when coalesce(btrim(p_text), '') = '' then false
+    else
+      -- Letter-for-number swaps folded first, so the lazy disguises collapse
+      -- onto the same spellings.
+      translate(lower(p_text), '@4$013', 'aasoie') ~
+        -- self-harm
+        '(kill|hurt|harm)\s+(my|your|him|her|them)self'
+        '|commit\s+suicide'
+        '|(cut|slit)\s+(my|your|his|her|their)\s+wrists?'
+        '|end\s+(my|your|his|her|their)\s+(own\s+)?life'
+        '|\mk\s*y\s*s\M'
+        -- threats aimed at a person, not the bare word "kill"
+        '|(i\s*(ll|m)|i\s+will|i\s+am|imma|im|gonna|going\s+to)\s+(going\s+to\s+)?(kill|murder|stab|shoot|beat|hurt)\s+(you|u|him|her|them)\M'
+        '|you\s+(will|are\s+going\s+to|gonna)\s+die\M'
+        -- slurs
+        '|\mretard(s|ed)?\M'
+        '|\mfagg?(ot|ots|s)?\M'
+        '|\mni[gq]{2}(er|a|ers|as|uh)\M'
+        '|\mtranny\M|\mtrannies\M'
+  end;
+$fn$;
+
+grant execute on function public.is_harmful_text(text) to authenticated;
+
 create function public.update_my_profile(
   p_display_name          text,
   p_bio                   text,
@@ -1743,6 +1784,13 @@ begin
 
   if v_color is not null and v_color !~* '^#[0-9a-f]{6}$' then
     raise exception 'Pick a colour in #rrggbb form.' using errcode = '22023';
+  end if;
+
+  -- The backstop. Both fields are public: the name rides on every comment, the
+  -- bio sits on the profile. See is_harmful_text() for why this exists when the
+  -- server action already checks.
+  if public.is_harmful_text(p_display_name) or public.is_harmful_text(p_bio) then
+    raise exception 'That text is not allowed here.' using errcode = '22023';
   end if;
 
   if v_font is not null and v_font not in

@@ -7,6 +7,7 @@ import { NO_CAT_MESSAGE, UNAVAILABLE_MESSAGE, detectCat } from '@/lib/cat-detect
 import { findNotePackage } from '@/lib/notes';
 import { isPremiumFontKey } from '@/app/fonts/premium';
 import { PROFANITY_MESSAGE, isProfane } from '@/lib/profanity';
+import { HARM_MESSAGE, harmCategory } from '@/lib/moderation';
 import type {
   Cat,
   CatBundle,
@@ -494,19 +495,42 @@ export type SaveProfileResult =
   | { ok: true }
   | { ok: false; error: string; field?: 'display_name' };
 
-/** The signed-in user's own editable fields, for the settings form. */
+/**
+ * The signed-in user's own editable fields, for the settings form.
+ *
+ * Retries, and the caller is expected to tell a failure apart from an empty
+ * profile. This used to swallow the error and return a profile of nulls, which
+ * rendered as a blank form -- and a blank form is not a cosmetic problem here:
+ * saving from it writes those blanks back and wipes the name and bio the user
+ * actually had. A read that did not come back must not look like a user with
+ * nothing in their profile.
+ */
 export async function getMyProfile(): Promise<MyProfile | null> {
   const supabase = createClient();
   const user = await getSessionUser();
   if (!user) return null;
 
-  const { data } = await supabase
-    .from('profiles')
-    .select(
-      'display_name, profile_picture_url, bio, premium_comment_color, premium_comment_glow, premium_comment_font, premium_display_title, premium_notes_balance',
-    )
-    .eq('user_id', user.id)
-    .maybeSingle();
+  let data = null;
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const result = await supabase
+      .from('profiles')
+      .select(
+        'display_name, profile_picture_url, bio, premium_comment_color, premium_comment_glow, premium_comment_font, premium_display_title, premium_notes_balance',
+      )
+      .eq('user_id', user.id)
+      .maybeSingle();
+    if (!result.error) {
+      data = result.data;
+      lastError = null;
+      break;
+    }
+    lastError = result.error;
+    await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+  }
+  // Null means "we could not read it", which the settings page renders as an
+  // error rather than as an editable, empty form.
+  if (lastError) return null;
 
   return {
     display_name: (data?.display_name as string | null) ?? null,
@@ -579,6 +603,22 @@ export async function saveProfile(formData: FormData): Promise<SaveProfileResult
       error: 'Please pick a display name without that language.',
       field: 'display_name',
     };
+  }
+  // A bio sits on a public profile next to a name for as long as the account
+  // exists, so it is held to more than "no swearing": self-harm, threats and
+  // slurs are refused too, each with its own message rather than one blanket
+  // scolding. The display name gets the same treatment -- it is even more
+  // exposed, appearing on every comment.
+  for (const [value, what] of [[displayName, 'display name'], [bio, 'bio']] as const) {
+    if (!value) continue;
+    const harm = harmCategory(value);
+    if (harm) {
+      return {
+        ok: false,
+        error: HARM_MESSAGE[harm],
+        field: what === 'display name' ? 'display_name' : undefined,
+      };
+    }
   }
   if (bio && isProfane(bio)) {
     return { ok: false, error: 'Please reword your bio without that language.' };
