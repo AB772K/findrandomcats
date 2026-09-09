@@ -260,14 +260,35 @@ alter table public.ratings  enable row level security;
 alter table public.comments enable row level security;
 alter table public.comment_reactions enable row level security;
 
--- profiles: you can only ever see / touch your own row.
+-- profiles: you can read your own row and nothing else. Writes go through the
+-- security-definer functions further down, never straight at the table.
 drop policy if exists "profiles: read own" on public.profiles;
 create policy "profiles: read own" on public.profiles
   for select using (auth.uid() = user_id);
 
-drop policy if exists "profiles: update own" on public.profiles;
-create policy "profiles: update own" on public.profiles
-  for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+-- There is deliberately NO update policy, and no write grant below.
+--
+-- There used to be one -- "profiles: update own", for update using
+-- (auth.uid() = user_id) -- and with the table-level UPDATE grant that
+-- authenticated holds by default it let a signed-in user PATCH their own
+-- profiles row through PostgREST and set any column on it. That is not a
+-- theoretical hole: a plain user account could set premium_notes_balance to
+-- 9999 in one request, and could equally write premium_display_title,
+-- daily_notes_spent or premium_comment_* directly.
+--
+-- Every gate in this schema lives in a security-definer function --
+-- update_my_profile() checks the premium NOTE before allowing a style,
+-- set_display_title() checks the badge is held, post_comment() charges the
+-- wallet -- and all of them were decorative while the client could simply
+-- write the row itself. Nothing in the app ever needed the grant: every
+-- profiles access in src/ is a SELECT, and every write already goes through
+-- one of those functions.
+--
+-- So writes are revoked at the grant level as well as the policy level. Two
+-- locks rather than one, because a future policy added without the grants in
+-- mind should not silently reopen this.
+revoke insert, update, delete, truncate, references
+  on public.profiles from anon, authenticated;
 
 -- cats: readable by everyone, insertable by signed-in users as themselves.
 drop policy if exists "cats: public read" on public.cats;
