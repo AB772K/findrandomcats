@@ -88,11 +88,6 @@ export default function TitleHistory({ rows }: { rows: ProfileTitleHistoryRow[] 
           {expanded ? 'Show fewer' : `Show ${hidden} earlier ${hidden === 1 ? 'month' : 'months'}`}
         </button>
       ) : null}
-
-      <p className="mt-3 text-[11px] text-ink/40">
-        Recorded each month when titles are recalculated. A title stays here
-        even after someone else takes it.
-      </p>
     </section>
   );
 }
