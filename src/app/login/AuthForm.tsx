@@ -2,7 +2,13 @@
 
 import { useFormState, useFormStatus } from 'react-dom';
 import { useState } from 'react';
-import { signIn, signInWithGoogle, signUp, type AuthState } from '@/app/login/actions';
+import {
+  requestPasswordReset,
+  signIn,
+  signInWithGoogle,
+  signUp,
+  type AuthState,
+} from '@/app/login/actions';
 
 function SubmitButton({ label }: { label: string }) {
   const { pending } = useFormStatus();
@@ -16,8 +22,15 @@ function SubmitButton({ label }: { label: string }) {
 
 export default function AuthForm() {
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  // A third state rather than a third tab: forgetting your password is
+  // something you fall into from signing in, not a way to arrive.
+  const [forgot, setForgot] = useState(false);
   const action = mode === 'signin' ? signIn : signUp;
   const [state, formAction] = useFormState<AuthState, FormData>(action, {});
+  const [resetState, resetAction] = useFormState<AuthState, FormData>(
+    requestPasswordReset,
+    {},
+  );
   // Its own state: signInWithGoogle takes no form data, and on success it never
   // returns at all -- it redirects to Google.
   const [googleError, setGoogleError] = useState<string | null>(null);
@@ -30,6 +43,46 @@ export default function AuthForm() {
     // Only reached when the handoff failed; otherwise we have already left.
     setGoingToGoogle(false);
     if (result?.error) setGoogleError(result.error);
+  }
+
+  if (forgot) {
+    return (
+      <div className="card space-y-4 p-6">
+        <div className="space-y-1">
+          <h2 className="font-display text-base font-semibold">Reset your password</h2>
+          <p className="text-xs text-ink/55">
+            We will email you a link. It expires shortly, so use it while it is fresh.
+          </p>
+        </div>
+
+        <form action={resetAction} className="space-y-3">
+          <label className="block space-y-1">
+            <span className="text-xs font-medium text-ink/55">Email</span>
+            <input name="email" type="email" autoComplete="email" required className="field" />
+          </label>
+          <SubmitButton label="Email me a reset link" />
+        </form>
+
+        {resetState.error ? (
+          <p className="rounded-2xl border border-rose-100 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+            {resetState.error}
+          </p>
+        ) : null}
+        {resetState.message ? (
+          <p className="rounded-2xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+            {resetState.message}
+          </p>
+        ) : null}
+
+        <button
+          type="button"
+          onClick={() => setForgot(false)}
+          className="w-full text-center text-xs text-ink/50 underline transition hover:text-ink"
+        >
+          Back to sign in
+        </button>
+      </div>
+    );
   }
 
   return (
@@ -75,6 +128,18 @@ export default function AuthForm() {
 
         <SubmitButton label={mode === 'signin' ? 'Sign in' : 'Create account'} />
       </form>
+
+      {/* Only on the sign-in side: there is nothing to have forgotten yet
+          while you are creating the account. */}
+      {mode === 'signin' ? (
+        <button
+          type="button"
+          onClick={() => setForgot(true)}
+          className="w-full text-center text-xs text-ink/50 underline transition hover:text-ink"
+        >
+          Forgot password?
+        </button>
+      ) : null}
 
       <div className="flex items-center gap-3 text-[11px] uppercase tracking-wide text-ink/35">
         <span className="h-px flex-1 bg-blush-100" />

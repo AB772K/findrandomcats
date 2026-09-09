@@ -86,3 +86,67 @@ export async function signInWithGoogle(): Promise<AuthState> {
 
   redirect(data.url);
 }
+
+/**
+ * Sends a password reset link.
+ *
+ * Always reports success, whatever the lookup found. Saying "no account with
+ * that email" would turn this form into a way to test which addresses are
+ * registered, and the person who genuinely owns the address learns nothing from
+ * it that the inbox will not tell them.
+ */
+export async function requestPasswordReset(
+  _prev: AuthState,
+  formData: FormData,
+): Promise<AuthState> {
+  const email = String(formData.get('email') ?? '').trim();
+  if (!email) return { error: 'Enter the email you signed up with.' };
+
+  const supabase = createClient();
+  const origin = headers().get('origin') ?? `http://${headers().get('host') ?? 'localhost:3000'}`;
+
+  // Through /auth/callback, not straight to the form: the code has to be
+  // exchanged somewhere a session cookie can be written, and a Route Handler
+  // is one of the few places Next permits that.
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: `${origin}/auth/callback?next=/auth/reset-password`,
+  });
+
+  // Rate limiting is the one failure worth surfacing: it is about the request,
+  // not about whether the account exists.
+  if (error && /rate limit|too many/i.test(error.message)) {
+    return { error: 'Too many reset emails just now. Try again in a few minutes.' };
+  }
+
+  return {
+    message: 'If that email has an account, a reset link is on its way. It expires shortly.',
+  };
+}
+
+export type PasswordResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * Sets a new password using the session the recovery link established.
+ *
+ * No current password is asked for here, and that is the point of the flow:
+ * possession of the emailed link IS the proof. The session only exists because
+ * the code from that link was exchanged, so an expired or reused link leaves
+ * nobody signed in and this refuses.
+ */
+export async function setNewPassword(password: string): Promise<PasswordResult> {
+  if (password.length < 6) return { ok: false, error: 'Use at least 6 characters.' };
+
+  const supabase = createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return { ok: false, error: 'That reset link has expired or was already used.' };
+  }
+
+  const { error } = await supabase.auth.updateUser({ password });
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath('/', 'layout');
+  return { ok: true };
+}
