@@ -1492,6 +1492,39 @@ $fn$;
 
 grant execute on function public.update_my_profile(text, text, text, text, boolean, text) to authenticated;
 
+-- ------------------------------------------ is this nickname free?
+-- Answers the live check on the onboarding form. It is a convenience, NOT the
+-- rule: profiles_display_name_lower_key is still what enforces uniqueness, and
+-- update_my_profile() still catches the violation and rewords it. Two people
+-- typing the same name at once will both be told it is free and the second
+-- save will still lose, which is correct -- a check and a write cannot be made
+-- atomic across a network round trip, so the constraint stays the authority.
+--
+-- Security definer because profiles are readable only by their owner: without
+-- it this could never see the name it is supposed to be checking against. It
+-- returns a single boolean and never the row, so it cannot be used to page
+-- through who holds what.
+--
+-- The caller's own current name counts as available, so re-saving your own
+-- profile does not report your name as taken.
+create or replace function public.display_name_available(p_name text)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $fn$
+  select not exists (
+    select 1
+    from public.profiles p
+    where p.display_name is not null
+      and lower(p.display_name) = lower(btrim(coalesce(p_name, '')))
+      and p.user_id is distinct from auth.uid()
+  );
+$fn$;
+
+grant execute on function public.display_name_available(text) to authenticated;
+
 -- ------------------------------------------------------- the daily wallet
 -- Tops the daily allowance back up to 3 if a full 24h has passed. Written as a
 -- conditional UPDATE so two concurrent callers cannot both grant a top-up:

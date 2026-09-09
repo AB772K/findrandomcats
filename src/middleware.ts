@@ -55,16 +55,58 @@ export async function middleware(request: NextRequest) {
   // backstop only -- sanitizing above is what actually prevents the throw,
   // including the one raised from an unawaited background refresh that no
   // try/catch here could reach.
+  let user = null;
   try {
-    await supabase.auth.getUser();
+    user = (await supabase.auth.getUser()).data.user;
   } catch {
     /* Treated as signed out; the bad cookie is already being expired. */
+  }
+
+  // A signed-in account with no nickname yet has to pick one before anything
+  // else. Enforced here rather than page by page so it covers every route,
+  // including ones added later that would be easy to forget.
+  //
+  // It costs one indexed lookup, and only on paths where a redirect could
+  // actually apply -- never for signed-out visitors, and never on the pages
+  // needed to get through or out of the gate, which would otherwise loop.
+  if (user && needsNicknameGate(request.nextUrl.pathname)) {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('display_name')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
+    // Only a profile that exists and is unnamed is redirected. A missing row
+    // means the signup trigger has not landed yet; sending them to a page that
+    // cannot save would be worse than letting the request through.
+    if (profile && !profile.display_name) {
+      const url = request.nextUrl.clone();
+      url.pathname = '/onboarding';
+      url.search = '';
+      const gate = NextResponse.redirect(url);
+      for (const cookie of response.cookies.getAll()) gate.cookies.set(cookie);
+      for (const name of dropped) gate.cookies.delete(name);
+      return gate;
+    }
   }
 
   // Expire the debris last, so a refresh written above is never overwritten.
   for (const name of dropped) response.cookies.delete(name);
 
   return response;
+}
+
+/**
+ * Paths exempt from the nickname gate: the gate itself, everything that gets
+ * you signed in or out, and the Server Action endpoint the form posts to --
+ * redirecting a POST would swallow the save and strand the user on the gate.
+ */
+function needsNicknameGate(pathname: string): boolean {
+  return !(
+    pathname === '/onboarding' ||
+    pathname.startsWith('/login') ||
+    pathname.startsWith('/auth/')
+  );
 }
 
 export const config = {

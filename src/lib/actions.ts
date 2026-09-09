@@ -466,6 +466,41 @@ export async function getMyProfile(): Promise<MyProfile | null> {
   };
 }
 
+export type NicknameCheck =
+  | { state: 'available' }
+  | { state: 'taken' }
+  | { state: 'invalid'; reason: string };
+
+/**
+ * Live availability for the onboarding form.
+ *
+ * A convenience only. The unique index is still what enforces uniqueness and
+ * update_my_profile() still rewords the violation, so a name that passes here
+ * can still lose a race to a simultaneous save -- which is why the form reports
+ * the save error too rather than trusting this answer.
+ *
+ * The format rules are the same ones saveProfile() applies, checked here so the
+ * user is told while typing instead of on submit.
+ */
+export async function checkNickname(name: string): Promise<NicknameCheck> {
+  const trimmed = name.trim();
+
+  if (trimmed.length < 2) return { state: 'invalid', reason: 'At least 2 characters.' };
+  if (trimmed.length > 40) return { state: 'invalid', reason: 'At most 40 characters.' };
+  if (isProfane(trimmed)) return { state: 'invalid', reason: 'Pick something without that language.' };
+
+  const supabase = createClient();
+  const user = await getSessionUser();
+  if (!user) return { state: 'invalid', reason: 'Sign in first.' };
+
+  const { data, error } = await supabase.rpc('display_name_available', { p_name: trimmed });
+  // An unknown answer is not a free name: saying "available" on a failed check
+  // would promise something the save is about to refuse.
+  if (error) return { state: 'invalid', reason: 'Could not check that name just now.' };
+
+  return data === true ? { state: 'available' } : { state: 'taken' };
+}
+
 /**
  * Saves display name, bio and (optionally) a new avatar. The picture goes to
  * the `avatars` bucket under the user's own folder, mirroring uploadCat().
