@@ -1122,8 +1122,9 @@ create table if not exists public.badge_history (
   title       text        not null,
   period      date        not null,
   recorded_at timestamptz not null default now(),
-  -- One tier of one category per month, so a re-run corrects rather than
-  -- duplicates -- the same idempotence the payout ledger relies on.
+  -- One tier of one category per month. The insert below is ON CONFLICT DO
+  -- NOTHING, so this key is what makes a settled month immutable: a re-run
+  -- neither duplicates the row nor rewrites it.
   primary key (profile_id, category, period)
 );
 
@@ -1226,10 +1227,19 @@ begin
     from public.profile_badges b
     join public.badge_titles t on t.category = b.category and t.tier = b.tier
     where b.category = cat
-    on conflict (profile_id, category, period) do update
-      set tier = excluded.tier,
-          title = excluded.title,
-          recorded_at = now();
+    -- DO NOTHING, not DO UPDATE. A month's record is written once and is then
+    -- immutable. The previous version restamped the row on conflict, which
+    -- made re-running the job for an already-settled month rewrite that month
+    -- using TODAY's standings -- silently turning a record of what was true in
+    -- July into a claim about September. Nothing else writes this table and
+    -- nothing deletes from it except a profile being deleted, so this is what
+    -- makes the history permanent rather than merely usually-correct.
+    --
+    -- The cost is that a genuinely bad settlement cannot be corrected by
+    -- re-running: its rows must be deleted first, deliberately, by hand. That
+    -- is the right trade -- an explicit deletion is visible, a silent rewrite
+    -- is not.
+    on conflict (profile_id, category, period) do nothing;
 
     return query select cat, v_granted, v_revoked;
   end loop;
