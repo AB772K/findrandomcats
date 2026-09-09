@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import CommentItem from '@/components/CommentItem';
 import EmojiPicker from '@/components/EmojiPicker';
 import type {
@@ -11,6 +11,28 @@ import type {
   ReactionKind,
   ReactionState,
 } from '@/lib/types';
+
+type SortKey = 'recent' | 'top';
+
+const SORTS: { key: SortKey; label: string }[] = [
+  { key: 'recent', label: 'Most recent' },
+  { key: 'top', label: 'Top rated' },
+];
+
+/**
+ * How well a comment went down.
+ *
+ * Likes, funny and hearts are all endorsements -- on this site "funny" is a
+ * laugh, not a jeer -- so they add up. Dislike is the only way to say a comment
+ * is bad, so it subtracts rather than counting as engagement: summing all four
+ * would let the comment everyone hated outrank the one everyone liked, which is
+ * the opposite of what a tab labelled "Top rated" promises.
+ */
+function score(c: CommentRow): number {
+  return (
+    Number(c.like_count) + Number(c.funny_count) + Number(c.love_count) - Number(c.dislike_count)
+  );
+}
 
 export default function CommentBox({
   comments,
@@ -32,6 +54,7 @@ export default function CommentBox({
   onDelete: (commentId: string) => Promise<string | null>;
   onReact: (commentId: string, reaction: ReactionKind) => Promise<ReactionState | string>;
 }) {
+  const [sort, setSort] = useState<SortKey>('recent');
   const [body, setBody] = useState('');
   const textarea = useRef<HTMLTextAreaElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -103,6 +126,21 @@ export default function CommentBox({
     { kind: 'daily', label: 'daily note', count: daily },
     { kind: 'premium', label: 'premium note', count: premium },
   ];
+
+  // Sorted here rather than in SQL: cat_comments() already returns every
+  // reaction count, so the ordering is a property of data the client is
+  // holding. A server round trip would buy nothing and lose the instant flip.
+  const ordered = useMemo(() => {
+    const rows = [...comments];
+    if (sort === 'recent') return rows;
+    // Newest wins a tie, so an unreacted thread still reads in a sane order
+    // instead of shuffling on every render.
+    return rows.sort(
+      (a, b) =>
+        score(b) - score(a) ||
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+    );
+  }, [comments, sort]);
 
   return (
     <section className="space-y-4">
@@ -214,8 +252,37 @@ export default function CommentBox({
         </p>
       )}
 
+      {/* Only worth offering once there is something to reorder. */}
+      {signedIn && comments.length > 1 ? (
+        <div
+          role="tablist"
+          aria-label="Sort comments"
+          className="flex gap-1 border-b border-blush-100 pb-2"
+        >
+          {SORTS.map((option) => {
+            const on = option.key === sort;
+            return (
+              <button
+                key={option.key}
+                type="button"
+                role="tab"
+                aria-selected={on}
+                onClick={() => setSort(option.key)}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition duration-200 ${
+                  on
+                    ? 'bg-blush-50 text-ink'
+                    : 'text-ink/50 hover:text-ink'
+                }`}
+              >
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
       <ul className="space-y-4">
-        {comments.map((comment) => (
+        {ordered.map((comment) => (
           <CommentItem
             key={comment.id}
             comment={comment}
