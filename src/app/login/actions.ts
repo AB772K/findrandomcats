@@ -35,9 +35,18 @@ export async function signUp(_prev: AuthState, formData: FormData): Promise<Auth
   const { data, error } = await supabase.auth.signUp({ email, password });
   if (error) return { error: error.message };
 
-  // With email confirmation on, signUp returns no session -- tell them to check mail.
+  // With email confirmation on, signUp returns no session -- tell them to check
+  // mail, and say why it matters beyond just signing in. Supabase links a Google
+  // identity to an existing account only when that account's email is already
+  // verified; an unconfirmed one is deliberately not linked, because linking to
+  // an address nobody has proven they own is a pre-account-takeover hole. So
+  // confirming is what makes "Continue with Google" later land on THIS account.
   if (!data.session) {
-    return { message: 'Check your inbox to confirm your email, then sign in.' };
+    return {
+      message:
+        'Check your inbox to confirm your email. Confirming is also what lets ' +
+        'Continue with Google find this account later.',
+    };
   }
 
   revalidatePath('/', 'layout');

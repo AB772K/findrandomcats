@@ -32,6 +32,13 @@ export default async function SettingsPage() {
         </p>
       </div>
 
+      {/* Two accounts on this site means two different email addresses -- the
+          same address cannot be registered twice. Showing which one you are
+          signed in as is what makes that visible rather than mysterious. */}
+      <p className="text-center text-xs text-ink/45">
+        Signed in as <span className="font-medium text-ink/70">{user.email}</span>
+      </p>
+
       <SettingsForm profile={profile} />
 
       {/* Its own card and its own action: titles are earned, not edited, so
