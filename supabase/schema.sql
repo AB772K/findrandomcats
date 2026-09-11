@@ -1333,11 +1333,9 @@ begin
   -- being held. set_display_title() still checks the badge at the moment of
   -- choosing, which is the only check now needed.
   --
-  -- One caveat, deliberately kept: admin_set_profile_badge() can still remove a
-  -- title, and clears the display itself when it does. That is a human typing a
-  -- correction for a title granted in error -- the opposite of an automatic
-  -- job quietly taking one back -- and it is the escape hatch that was asked
-  -- for. Nothing automatic can reach it.
+  -- There is no function anywhere that removes a Title. A Title granted in
+  -- error is corrected by the database owner directly in SQL, which is the
+  -- only remaining path and is deliberately not callable from the app.
 end;
 $fn$;
 
@@ -1498,245 +1496,24 @@ $fn$;
 
 grant execute on function public.profile_badge_history(uuid) to anon, authenticated;
 
--- ==================================================== admin corrections ==
--- WHY THIS EXISTS, AND WHY IT IS NOT A HOLE IN THE PROTECTION ABOVE.
+-- ------------------------------------------------ manual corrections
+-- There is deliberately NO admin function for correcting Titles, Badges or
+-- either history table, and no admin allowlist. There used to be:
+-- admin_backfill_badge_history(), admin_set_profile_badge(), is_badge_admin()
+-- and a badge_admins table. They were removed to keep the number of
+-- privileged, callable-from-PostgREST functions as small as possible.
 --
--- recompute_profile_badges() writes badge_history with ON CONFLICT DO NOTHING,
--- so a month, once settled, is immutable. That is deliberate: the automatic job
--- can be re-run for any period, and DO UPDATE would have let a re-run restamp
--- an old month with TODAY's standings -- silently turning a record of what was
--- true in July into a claim about September. Do not change that back.
+-- Corrections are made directly in SQL as the database owner instead. Only
+-- profile_badges / badge_history (Titles) and monthly_badge_history (Badges)
+-- are involved, and each has a primary key that makes an upsert or delete
+-- unambiguous. Do not reintroduce a function for this.
 --
--- But immutability with no escape hatch is its own failure. If the job never
--- ran for a month, or ran with a bug, or the site was down, the record for that
--- month is simply wrong, and the protected path cannot fix it -- DO NOTHING
--- will not correct a row that already exists, and cannot invent one for a month
--- that was never settled.
---
--- So the escape hatch is a SEPARATE function that a human calls on purpose,
--- one row at a time, with the period spelled out. The distinction that matters
--- is not "can this overwrite" -- both could -- it is whether an overwrite can
--- happen as a SIDE EFFECT of a routine job nobody is watching. The automatic
--- path must never rewrite the past by accident. This path only rewrites what
--- someone deliberately named, and it hands back what it destroyed so the
--- correction leaves a trace rather than happening silently.
---
--- Not exposed anywhere in the app, and not meant to be: call it from SQL or an
--- admin script.
-
--- Who may call the admin functions. A table rather than a flag on profiles: a
--- profiles row sits behind policies that have already been wrong once (a user
--- could write their own row until it was revoked above), and admin should not
--- live inside that blast radius. Nothing can read or write this table from
--- PostgREST -- RLS on, no policies, no grants -- so it is reachable only by the
--- security-definer functions below and by a direct database connection.
-create table if not exists public.badge_admins (
-  user_id    uuid        primary key references auth.users (id) on delete cascade,
-  note       text,
-  created_at timestamptz not null default now()
-);
-
-alter table public.badge_admins enable row level security;
-
--- The project owner, by email so this stays readable and portable rather than
--- carrying a bare uuid. Add others the same way, from SQL.
-insert into public.badge_admins (user_id, note)
-select id, 'project owner'
-from auth.users
-where email = 'basitzahid0@gmail.com'
-on conflict (user_id) do nothing;
-
--- Is the caller allowed to make corrections?
-create or replace function public.is_badge_admin()
-returns boolean
-language plpgsql
-stable
-security definer
-set search_path = public
-as $fn$
-declare
-  v_claims text := nullif(current_setting('request.jwt.claims', true), '');
-begin
-  -- A direct database connection -- psql, the session pooler, a migration --
-  -- carries no PostgREST request context. Whoever holds it can already write
-  -- these tables directly, so gating it would protect nothing. session_user is
-  -- checked as well as the claims because security definer changes
-  -- current_user but not session_user, so a PostgREST request still reports
-  -- the authenticator role here even if its claims were somehow absent.
-  if v_claims is null
-     and session_user not in ('anon', 'authenticated', 'authenticator') then
-    return true;
-  end if;
-
-  -- service_role is the backend key: it reaches PostgREST with claims but no
-  -- end user, and can likewise write these tables directly regardless.
-  if v_claims is not null and (v_claims::json ->> 'role') = 'service_role' then
-    return true;
-  end if;
-
-  -- Everyone else must be named in badge_admins. A signed-out caller has a
-  -- null auth.uid(), which matches nothing.
-  return exists (select 1 from public.badge_admins a where a.user_id = auth.uid());
-end;
-$fn$;
-
-revoke all on function public.is_badge_admin() from public, anon, authenticated;
-
--- ------------------------------------------ correct one month of history
--- Deliberately an upsert, unlike the automatic path. Returns what was there
--- before, so an overwrite is reported rather than silent: 'inserted' with nulls
--- means it filled a gap, 'updated' with the old values means it replaced a
--- record, and the caller can see which.
-create or replace function public.admin_backfill_badge_history(
-  p_profile_id uuid,
-  p_category   text,
-  p_tier       integer,
-  p_title      text,
-  p_period     date
-)
-returns table (
-  action               text,
-  previous_tier        smallint,
-  previous_title       text,
-  previous_recorded_at timestamptz
-)
-language plpgsql
-security definer
-set search_path = public
-as $fn$
-declare
-  v_period date := date_trunc('month', p_period)::date;
-  v_title  text := btrim(coalesce(p_title, ''));
-  v_prev   public.badge_history;
-begin
-  if not public.is_badge_admin() then
-    raise exception 'Not permitted.' using errcode = '42501';
-  end if;
-
-  if not exists (select 1 from public.profiles where id = p_profile_id) then
-    raise exception 'No such profile.' using errcode = 'P0002';
-  end if;
-  if p_tier is null or p_tier not in (1, 2, 3) then
-    raise exception 'Tier must be 1, 2 or 3.' using errcode = '22023';
-  end if;
-  if v_title = '' then
-    raise exception 'A title is required.' using errcode = '22023';
-  end if;
-  -- Against the live category list rather than a second copy of it, so a typo
-  -- cannot quietly create history for a board that does not exist.
-  if not exists (select 1 from public.badge_titles t where t.category = p_category) then
-    raise exception 'Unknown category: %', p_category using errcode = '22023';
-  end if;
-  if p_period is null then
-    raise exception 'A period is required.' using errcode = '22023';
-  end if;
-
-  select * into v_prev
-  from public.badge_history h
-  where h.profile_id = p_profile_id and h.category = p_category and h.period = v_period;
-
-  insert into public.badge_history (profile_id, category, tier, title, period)
-  values (p_profile_id, p_category, p_tier::smallint, v_title, v_period)
-  on conflict (profile_id, category, period) do update
-    set tier = excluded.tier,
-        title = excluded.title,
-        recorded_at = now();
-
-  return query select
-    case when v_prev.profile_id is null then 'inserted' else 'updated' end,
-    v_prev.tier,
-    v_prev.title,
-    v_prev.recorded_at;
-end;
-$fn$;
-
--- Reachable, but only ever successful for an admin: the body is the gate, so a
--- regular user gets a refusal rather than a silent no-op. Never granted to anon.
-revoke all on function public.admin_backfill_badge_history(uuid, text, integer, text, date)
-  from public, anon;
-grant execute on function public.admin_backfill_badge_history(uuid, text, integer, text, date)
-  to authenticated;
-
--- ------------------------------------- correct what someone holds RIGHT NOW
--- A parallel function rather than one doing both, because the two tables answer
--- different questions and are keyed differently: history is (profile, category,
--- period) and is a record of the past; profile_badges is (profile, category) and
--- is the present. Folding them together would mean guessing that a correction to
--- one is always a correction to the other, which is exactly the kind of implicit
--- side effect the automatic path is protected against.
---
--- A null tier revokes the badge, which is the other half of "correct it".
-create or replace function public.admin_set_profile_badge(
-  p_profile_id uuid,
-  p_category   text,
-  p_tier       integer
-)
-returns table (
-  action              text,
-  previous_tier       smallint,
-  previous_awarded_at timestamptz
-)
-language plpgsql
-security definer
-set search_path = public
-as $fn$
-declare
-  v_prev public.profile_badges;
-begin
-  if not public.is_badge_admin() then
-    raise exception 'Not permitted.' using errcode = '42501';
-  end if;
-
-  if not exists (select 1 from public.profiles where id = p_profile_id) then
-    raise exception 'No such profile.' using errcode = 'P0002';
-  end if;
-
-  select * into v_prev
-  from public.profile_badges b
-  where b.profile_id = p_profile_id and b.category = p_category;
-
-  if p_tier is null then
-    delete from public.profile_badges b
-    where b.profile_id = p_profile_id and b.category = p_category;
-
-    -- A revoked badge cannot stay on display, the same sweep the monthly job
-    -- performs -- otherwise a correction here would leave a title showing that
-    -- its owner no longer holds.
-    update public.profiles p
-    set premium_display_title = null
-    where p.id = p_profile_id
-      and p.premium_display_title is not null
-      and not exists (
-        select 1
-        from public.profile_badges b
-        join public.badge_titles t on t.category = b.category and t.tier = b.tier
-        where b.profile_id = p.id and t.title = p.premium_display_title
-      );
-
-    return query select
-      case when v_prev.profile_id is null then 'nothing to revoke' else 'revoked' end,
-      v_prev.tier,
-      v_prev.awarded_at;
-    return;
-  end if;
-
-  -- The (category, tier) foreign key to badge_titles does the validating here,
-  -- so an unknown pair is refused by the constraint rather than by a copy of it.
-  insert into public.profile_badges (profile_id, category, tier)
-  values (p_profile_id, p_category, p_tier::smallint)
-  on conflict (profile_id, category) do update
-    set tier = excluded.tier,
-        awarded_at = now();
-
-  return query select
-    case when v_prev.profile_id is null then 'granted' else 'changed' end,
-    v_prev.tier,
-    v_prev.awarded_at;
-end;
-$fn$;
-
-revoke all on function public.admin_set_profile_badge(uuid, text, integer) from public, anon;
-grant execute on function public.admin_set_profile_badge(uuid, text, integer) to authenticated;
+-- The drops stay here so an existing database is cleaned up by re-running the
+-- schema; CREATE IF NOT EXISTS would otherwise leave the old objects in place.
+drop function if exists public.admin_set_profile_badge(uuid, text, integer);
+drop function if exists public.admin_backfill_badge_history(uuid, text, integer, text, date);
+drop function if exists public.is_badge_admin();
+drop table if exists public.badge_admins;
 
 -- --------------------------------------------------- choose your title
 -- Only a badge you currently hold may be displayed. The picker on /settings
