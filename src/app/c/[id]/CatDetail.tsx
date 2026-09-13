@@ -33,11 +33,9 @@ export default function CatDetail({
   const handleRate = useCallback(
     async (stars: number) => {
       setError(null);
-      try {
-        setBundle(await rateCat(bundle.cat.id, stars));
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : 'Could not save your rating.');
-      }
+      const result = await rateCat(bundle.cat.id, stars);
+      if (result.ok) setBundle(result.bundle);
+      else setError(result.error);
     },
     [bundle.cat.id],
   );

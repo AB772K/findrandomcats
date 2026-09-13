@@ -83,7 +83,16 @@ export default function LeaderboardTabs({
 
     async function refresh() {
       if (document.visibilityState !== 'visible') return;
-      const fresh = await fetchLeaderboard(metric, scope);
+      // Through the passive API route, not the action: a poll is not the user
+      // doing something, and must not keep an idle session alive.
+      let fresh: LeaderboardRow[];
+      try {
+        const res = await fetch(`/api/leaderboard?metric=${metric}&scope=${scope}`, { cache: 'no-store' });
+        if (!res.ok) return;
+        fresh = (await res.json()) as LeaderboardRow[];
+      } catch {
+        return; // a blip; the next tick will try again
+      }
       if (cancelled) return;
       setCache((prev) => ({ ...prev, [keyOf(scope, metric)]: fresh }));
       setRows(fresh);

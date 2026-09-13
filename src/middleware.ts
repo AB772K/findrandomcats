@@ -32,6 +32,42 @@ export async function middleware(request: NextRequest) {
   for (const name of dropped) request.cookies.delete(name);
   if (dropped.length > 0) response = NextResponse.next({ request });
 
+  // IDLE TIMEOUT. Checked before the refresh below, because refreshing is what
+  // would otherwise keep an abandoned session alive forever: Supabase refresh
+  // tokens do not expire on their own, so "idle for an hour" has to be this
+  // file's rule. A request arriving more than IDLE_LIMIT_MS after the last
+  // active one ends the session, whatever the tokens say; every active request
+  // inside the limit pushes the deadline out again, so genuine use never hits
+  // a hard cutoff. Passive requests -- the leaderboard poll -- neither extend
+  // nor end anything.
+  const hasSession = safeCookies.some((c) => /^sb-.*-auth-token/.test(c.name));
+  const lastActive = Number(request.cookies.get(LAST_ACTIVE_COOKIE)?.value ?? 0);
+  const passive = isPassive(request);
+
+  if (hasSession && lastActive > 0 && Date.now() - lastActive > IDLE_LIMIT_MS && !passive) {
+    const names = sessionCookieNames(request);
+    for (const name of names) request.cookies.delete(name);
+
+    const isNavigation = request.method === 'GET' && !request.headers.get('next-action');
+    let out: NextResponse;
+    if (isNavigation) {
+      // A page load: send them to sign in, with the reason on the page.
+      const to = request.nextUrl.clone();
+      to.pathname = '/login';
+      to.search = '?error=' + encodeURIComponent(
+        'Your session ended after an hour of inactivity. Please sign in again.');
+      out = NextResponse.redirect(to);
+    } else {
+      // A Server Action or API call: let it run signed-out. The action reads
+      // EXPIRED_COOKIE through getSessionState() and answers with the same
+      // sentence instead of a bare "sign in".
+      out = NextResponse.next({ request });
+    }
+    for (const name of names) out.cookies.delete(name);
+    out.cookies.set(EXPIRED_COOKIE, '1', { httpOnly: true, sameSite: 'lax', path: '/', maxAge: 60 });
+    return out;
+  }
+
   const supabase = createServerClient(url, key, {
     cookies: {
       getAll() {
@@ -86,6 +122,11 @@ export async function middleware(request: NextRequest) {
       const gate = NextResponse.redirect(url);
       for (const cookie of response.cookies.getAll()) gate.cookies.set(cookie);
       for (const name of dropped) gate.cookies.delete(name);
+      if (!passive) {
+        gate.cookies.set(LAST_ACTIVE_COOKIE, String(Date.now()), {
+          httpOnly: true, sameSite: 'lax', path: '/', maxAge: 60 * 60 * 24 * 30,
+        });
+      }
       return gate;
     }
   }
@@ -93,7 +134,42 @@ export async function middleware(request: NextRequest) {
   // Expire the debris last, so a refresh written above is never overwritten.
   for (const name of dropped) response.cookies.delete(name);
 
+  // Stamp activity for a signed-in, non-passive request. The cookie outlives
+  // the idle limit on purpose: it has to still be there, old, for the check
+  // above to notice how long it has been.
+  if (user && !passive) {
+    response.cookies.set(LAST_ACTIVE_COOKIE, String(Date.now()), {
+      httpOnly: true, sameSite: 'lax', path: '/', maxAge: 60 * 60 * 24 * 30,
+    });
+  }
+  // Signing out or in clears the stale stamp; nothing else should carry it.
+  if (!user) response.cookies.delete(LAST_ACTIVE_COOKIE);
+
   return response;
+}
+
+/** How long a session may sit untouched before it is ended. */
+const IDLE_LIMIT_MS = 60 * 60 * 1000;
+/** Records the last request that counted as activity. httpOnly; the browser never reads it. */
+const LAST_ACTIVE_COOKIE = 'fr-last-active';
+/** Set for one request after an idle expiry, so the next page can say why. */
+const EXPIRED_COOKIE = 'fr-expired';
+
+/**
+ * Requests that must not count as activity. The leaderboard poll fires every
+ * ten seconds while its tab is visible; if that extended the session, a tab
+ * left open on the leaderboard would never idle out at all.
+ */
+function isPassive(request: NextRequest): boolean {
+  return request.nextUrl.pathname.startsWith('/api/leaderboard');
+}
+
+/** Every cookie @supabase/ssr may hold a session in, plus this file's own. */
+function sessionCookieNames(request: NextRequest): string[] {
+  return request.cookies
+    .getAll()
+    .map((c) => c.name)
+    .filter((name) => /^sb-.*-auth-token(\.\d+)?$/.test(name) || name === LAST_ACTIVE_COOKIE);
 }
 
 /**

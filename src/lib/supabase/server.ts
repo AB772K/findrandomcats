@@ -1,3 +1,4 @@
+import { cache } from 'react';
 import { cookies } from 'next/headers';
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 
@@ -55,15 +56,76 @@ export function createClient() {
  * such a cookie, but every entry point that reads a user gets the same
  * guarantee here so nothing depends on the middleware having run first.
  */
-export async function getSessionUser() {
-  try {
-    const {
-      data: { user },
-    } = await createClient().auth.getUser();
-    return user;
-  } catch {
-    return null;
+/** Errors that mean the auth service was unreachable, not that the token was bad. */
+function isTransient(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const status = (error as { status?: number } | null)?.status;
+  return (
+    /fetch failed|ECONNRESET|ETIMEDOUT|EAI_AGAIN|network|socket hang up/i.test(message) ||
+    (typeof status === 'number' && status >= 500)
+  );
+}
+
+export type SessionState = {
+  user: Awaited<ReturnType<ReturnType<typeof createClient>['auth']['getUser']>>['data']['user'];
+  /**
+   * True when the auth service could not be reached even after retrying. The
+   * user is null in that case too, but "we could not check" must never be
+   * shown as "you are not signed in": one is a retry, the other is a login
+   * form, and confusing them is what produced the confusing error.
+   */
+  unverified: boolean;
+  /** True for the one request right after the middleware ended an idle session. */
+  expired: boolean;
+};
+
+export const SESSION_EXPIRED_MESSAGE =
+  'Your session ended after an hour of inactivity. Please sign in again.';
+
+/** Wording for the unverified case, shared so every surface says the same thing. */
+export const SESSION_UNVERIFIED_MESSAGE =
+  'Could not confirm your session just now. Please try again.';
+
+/**
+ * The session, checked ONCE per request.
+ *
+ * Wrapped in React's cache() so every caller in a single render -- the root
+ * layout that draws the nav, the page that decides whether the star picker is
+ * enabled, the action that saves the rating -- shares one result. Before this
+ * each made its own network call to the auth service, and when one of them
+ * failed transiently the page contradicted itself: the nav showed you signed
+ * in while the picker said "Sign in to rate this cat." That was the bug
+ * reported against new accounts. It was not about new accounts; it was about
+ * two calls disagreeing, and a fresh session's first requests are simply when
+ * a blip is most visible.
+ *
+ * Transient failures are retried. If the service still cannot be reached the
+ * whole request sees one coherent answer -- no user, flagged unverified -- so
+ * nothing on the page can claim otherwise.
+ */
+export const getSessionState = cache(async (): Promise<SessionState> => {
+  // The middleware sets this for one request when it ends an idle session, so
+  // an action landing in that request can say "expired" rather than "sign in".
+  const expired = cookies().get('fr-expired')?.value === '1';
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const { data, error } = await createClient().auth.getUser();
+      if (!error) return { user: data.user, unverified: false, expired };
+      // A definite answer -- no session, expired, bad token -- is not transient.
+      if (!isTransient(error)) return { user: null, unverified: false, expired };
+    } catch (error) {
+      // An undecodable cookie throws; that is a real absence of a usable
+      // session, and the middleware is already expiring it.
+      if (!isTransient(error)) return { user: null, unverified: false, expired };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
   }
+  return { user: null, unverified: true, expired };
+});
+
+/** The signed-in user, or null. See getSessionState() for what null can mean. */
+export async function getSessionUser() {
+  return (await getSessionState()).user;
 }
 
 /**

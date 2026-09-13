@@ -2,7 +2,14 @@
 
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { createClient, createStatelessClient, getSessionUser } from '@/lib/supabase/server';
+import {
+  SESSION_EXPIRED_MESSAGE,
+  SESSION_UNVERIFIED_MESSAGE,
+  createClient,
+  createStatelessClient,
+  getSessionState,
+  getSessionUser,
+} from '@/lib/supabase/server';
 import { NO_CAT_MESSAGE, UNAVAILABLE_MESSAGE, detectCat } from '@/lib/cat-detector';
 import { findNotePackage } from '@/lib/notes';
 import { isPremiumFontKey } from '@/app/fonts/premium';
@@ -105,28 +112,40 @@ export async function fetchCat(catId: string): Promise<CatBundle | null> {
 
 /* ------------------------------------------------------------------ rating */
 
-export async function rateCat(catId: string, stars: number): Promise<CatBundle> {
+export type RateResult = { ok: true; bundle: CatBundle } | { ok: false; error: string };
+
+/**
+ * Returns a result rather than throwing. Next strips the message from an error
+ * thrown by a Server Action in production, so a thrown "Sign in to rate cats."
+ * reached the browser as a generic failure -- which is part of why the report
+ * read as "a confusing error". A returned error keeps its words.
+ */
+export async function rateCat(catId: string, stars: number): Promise<RateResult> {
   if (!Number.isInteger(stars) || stars < 1 || stars > 10) {
-    throw new Error('Rating must be a whole number from 1 to 10.');
+    return { ok: false, error: 'Rating must be a whole number from 1 to 10.' };
   }
 
   const supabase = createClient();
-  const user = await getSessionUser();
-  if (!user) throw new Error('Sign in to rate cats.');
+  const { user, unverified, expired } = await getSessionState();
+  // Unreachable auth service is "try again"; an idled-out session is "expired";
+  // neither is a bare "sign in", which is the confusing one.
+  if (unverified) return { ok: false, error: SESSION_UNVERIFIED_MESSAGE };
+  if (expired) return { ok: false, error: SESSION_EXPIRED_MESSAGE };
+  if (!user) return { ok: false, error: 'Sign in to rate cats.' };
 
   const { error } = await supabase
     .from('ratings')
     .upsert({ cat_id: catId, user_id: user.id, stars }, { onConflict: 'cat_id,user_id' });
-  if (error) throw new Error(error.message);
+  if (error) return { ok: false, error: error.message };
 
   const { data: cat, error: catError } = await supabase
     .from('cats')
     .select('*')
     .eq('id', catId)
     .single();
-  if (catError) throw new Error(catError.message);
+  if (catError) return { ok: false, error: catError.message };
 
-  return loadBundle(cat as Cat);
+  return { ok: true, bundle: await loadBundle(cat as Cat) };
 }
 
 /* ---------------------------------------------------------------- comments */
@@ -155,7 +174,9 @@ export async function postComment(
   if (isProfane(trimmed)) return { ok: false, error: PROFANITY_MESSAGE };
 
   const supabase = createClient();
-  const user = await getSessionUser();
+  const { user, unverified, expired } = await getSessionState();
+  if (unverified) return { ok: false, error: SESSION_UNVERIFIED_MESSAGE };
+  if (expired) return { ok: false, error: SESSION_EXPIRED_MESSAGE };
   if (!user) return { ok: false, error: 'Sign in to comment.' };
 
   const { error } = await supabase.rpc('post_comment', {
