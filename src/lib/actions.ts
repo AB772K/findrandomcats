@@ -10,7 +10,7 @@ import {
   getSessionState,
   getSessionUser,
 } from '@/lib/supabase/server';
-import { NO_CAT_MESSAGE, UNAVAILABLE_MESSAGE, detectCat } from '@/lib/cat-detector';
+import { NO_CAT_MESSAGE, PERSON_MESSAGE, UNAVAILABLE_MESSAGE, detectCat } from '@/lib/cat-detector';
 import { findNotePackage } from '@/lib/notes';
 import { isPremiumFontKey } from '@/app/fonts/premium';
 import { PROFANITY_MESSAGE, isProfane } from '@/lib/profanity';
@@ -314,7 +314,14 @@ export async function uploadCat(formData: FormData): Promise<{ error: string } |
   if (!check.ok) {
     // 'unavailable' means we could not decide. Fail closed: an upload nobody
     // checked is exactly what this is meant to prevent.
-    return { error: check.reason === 'no-cat' ? NO_CAT_MESSAGE : UNAVAILABLE_MESSAGE };
+    return {
+      error:
+        check.reason === 'person'
+          ? PERSON_MESSAGE
+          : check.reason === 'no-cat'
+            ? NO_CAT_MESSAGE
+            : UNAVAILABLE_MESSAGE,
+    };
   }
 
   const extension = (file.name.split('.').pop() ?? 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '');

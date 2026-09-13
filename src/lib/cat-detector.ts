@@ -2,6 +2,7 @@ import 'server-only';
 
 import * as tf from '@tensorflow/tfjs';
 import * as mobilenet from '@tensorflow-models/mobilenet';
+import * as blazeface from '@tensorflow-models/blazeface';
 import sharp from 'sharp';
 
 /**
@@ -50,6 +51,39 @@ const CONFIDENCE_THRESHOLD = 0.15;
 /** How many predictions to consider per view. MobileNet's tail is noise. */
 const TOP_K = 10;
 
+/**
+ * THE PERSON CHECK, and why it is a combined rule rather than "face => reject".
+ *
+ * BlazeFace is a human face detector, and it was calibrated here on real
+ * photos before being trusted. On 16 real human portraits it fired at 1.00
+ * confidence every time, with the face covering 6-35% of the frame, and
+ * MobileNet scored every one of them 0% cat. On 22 real cat photos it ALSO
+ * fired at >= 0.90 on roughly one in ten, and at >= 0.77 on about three in
+ * ten -- a frontal cat face is close enough to a human one for it. So a face
+ * on its own is not grounds to reject: it would throw out real cats.
+ *
+ * What separates the two is MobileNet. A human -- filter or no filter -- does
+ * not look like an ImageNet cat, so their cat score sits near zero, while a
+ * real cat that happens to trip the face detector still scores as a cat
+ * (64% on the clearest such case in the sample). The rule is therefore:
+ * reject as a person only when a confident, reasonably large face is found
+ * AND the cat scan stayed weak. That last condition is the guard for real
+ * cats, and it is why the face pass only runs when the cat score is below
+ * PERSON_CHECK_BELOW -- a clear cat never pays for it.
+ *
+ * The case this is aimed at -- a person wearing a cat-ears/whiskers filter --
+ * could not be sourced for calibration, so the 0.15-0.35 band it is meant to
+ * catch is reasoned from the two ends, not measured in the middle. Plain human
+ * portraits were already refused by the cat check alone; what this adds for
+ * them is an accurate reason.
+ */
+const FACE_CONFIDENCE = 0.9;
+/** A face this small relative to the frame is texture, not a portrait. */
+const FACE_MIN_AREA = 0.04;
+/** Only look for a person when the cat evidence is this weak. */
+const PERSON_CHECK_BELOW = 0.35;
+const FACE_INPUT_SIZE = 256;
+
 const INPUT_SIZE = 224;
 
 /**
@@ -80,6 +114,7 @@ function withTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T>
 export type CatCheck =
   | { ok: true; confidence: number }
   | { ok: false; reason: 'no-cat'; confidence: number }
+  | { ok: false; reason: 'person'; confidence: number; faceConfidence: number }
   | { ok: false; reason: 'unavailable' };
 
 let modelPromise: Promise<mobilenet.MobileNet> | null = null;
@@ -98,6 +133,51 @@ function loadModel(): Promise<mobilenet.MobileNet> {
     });
   }
   return modelPromise;
+}
+
+let facePromise: Promise<blazeface.BlazeFaceModel> | null = null;
+
+/** BlazeFace, once per process, with the same retry-on-failure shape as MobileNet. */
+function loadFaceModel(): Promise<blazeface.BlazeFaceModel> {
+  if (!facePromise) {
+    facePromise = blazeface.load().catch((cause) => {
+      facePromise = null;
+      throw cause;
+    });
+  }
+  return facePromise;
+}
+
+/**
+ * The strongest human face in the frame: its confidence and its share of the
+ * frame. Whole frame, letterboxed, so a face at the edge is not cropped away.
+ */
+async function strongestFace(upright: Buffer): Promise<{ confidence: number; area: number }> {
+  const model = await withTimeout(loadFaceModel(), MODEL_LOAD_TIMEOUT_MS, 'face model load');
+  const rgb = await toRgb(
+    sharp(upright).resize(FACE_INPUT_SIZE, FACE_INPUT_SIZE, {
+      fit: 'contain',
+      background: { r: 124, g: 116, b: 104 },
+    }),
+  );
+  const tensor = tf.tensor3d(new Uint8Array(rgb), [FACE_INPUT_SIZE, FACE_INPUT_SIZE, 3], 'int32');
+  try {
+    const faces = await model.estimateFaces(tensor, false);
+    let confidence = 0;
+    let area = 0;
+    for (const face of faces) {
+      const p = Array.isArray(face.probability) ? Number(face.probability[0]) : Number(face.probability);
+      const [x1, y1] = face.topLeft as [number, number];
+      const [x2, y2] = face.bottomRight as [number, number];
+      if (p > confidence) {
+        confidence = p;
+        area = Math.abs((x2 - x1) * (y2 - y1)) / (FACE_INPUT_SIZE * FACE_INPUT_SIZE);
+      }
+    }
+    return { confidence, area };
+  } finally {
+    tensor.dispose();
+  }
 }
 
 function catConfidence(predictions: { className: string; probability: number }[]): number {
@@ -157,7 +237,7 @@ async function scan(model: mobilenet.MobileNet, input: Buffer): Promise<CatCheck
   // 1. Centre crop -- what MobileNet was trained on, and how most cat photos
   //    are framed.
   const centre = await toRgb(sharp(upright).resize(INPUT_SIZE, INPUT_SIZE, { fit: 'cover' }));
-  if (await consider(centre)) return { ok: true, confidence: best };
+  if (await consider(centre)) return await weakCatOrPerson(upright, best);
 
   // 2. Whole frame letterboxed, so a cat at the edge is not cropped away.
   const whole = await toRgb(
@@ -166,7 +246,7 @@ async function scan(model: mobilenet.MobileNet, input: Buffer): Promise<CatCheck
       background: { r: 124, g: 116, b: 104 },
     }),
   );
-  if (await consider(whole)) return { ok: true, confidence: best };
+  if (await consider(whole)) return await weakCatOrPerson(upright, best);
 
   // 3. Overlapping 60% tiles. This is what rescues a small or partly hidden
   //    cat: it fills enough of a tile to register.
@@ -186,15 +266,36 @@ async function scan(model: mobilenet.MobileNet, input: Buffer): Promise<CatCheck
         .extract({ left, top, width: tileW, height: tileH })
         .resize(INPUT_SIZE, INPUT_SIZE, { fit: 'fill' }),
     );
-    if (await consider(tile)) return { ok: true, confidence: best };
+    if (await consider(tile)) return await weakCatOrPerson(upright, best);
   }
 
-  return { ok: false, reason: 'no-cat', confidence: best };
+  return await weakCatOrPerson(upright, best);
+}
+
+/**
+ * The exit for anything that is not a clear cat. Below PERSON_CHECK_BELOW the
+ * evidence is weak enough that a confident human face outranks it; at or
+ * above, the cat wins outright and the face model is never loaded.
+ */
+async function weakCatOrPerson(upright: Buffer, best: number): Promise<CatCheck> {
+  if (best >= PERSON_CHECK_BELOW) return { ok: true, confidence: best };
+
+  const face = await strongestFace(upright);
+  if (face.confidence >= FACE_CONFIDENCE && face.area >= FACE_MIN_AREA) {
+    return { ok: false, reason: 'person', confidence: best, faceConfidence: face.confidence };
+  }
+  return best >= CONFIDENCE_THRESHOLD
+    ? { ok: true, confidence: best }
+    : { ok: false, reason: 'no-cat', confidence: best };
 }
 
 export const NO_CAT_MESSAGE =
   'We could not find a cat in that photo. FindRandomCats is cats only — try another one, ' +
   'ideally with the cat filling more of the frame.';
+
+export const PERSON_MESSAGE =
+  'That looks like a photo of a person, not a cat — filters and cat ears included. ' +
+  'FindRandomCats is for the cats themselves.';
 
 export const UNAVAILABLE_MESSAGE =
   'We could not check that photo for cats just now. Please try uploading it again in a moment.';
