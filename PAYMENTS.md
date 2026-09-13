@@ -24,12 +24,10 @@ reconstruct the decision or the plan.
 | $15   | 350           |
 | $25   | 650           |
 
-These replace the placeholder packages currently in
-[`src/lib/notes.ts`](src/lib/notes.ts) (`starter` / `regular` / `jumbo` at
-$1.99 / $7.99 / $24.99), which were only ever there to give the UI something
-to render. Update `NOTE_PACKAGES` when the real products exist; the `/notes`
-page and `findNotePackage()` read from it, and prices are never taken from the
-client.
+`NOTE_PACKAGES` in [`src/lib/notes.ts`](src/lib/notes.ts) already shows these
+three (ids `100`, `350`, `650`); the `/notes` and `/checkout` pages read from
+it, and prices are never taken from the client. Only the display is done --
+buying still returns "payments aren't live yet".
 
 ## Integration plan
 
