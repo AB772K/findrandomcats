@@ -218,6 +218,7 @@ export default function CommentItem({
               {comment.display_title ? (
                 <TitleBadge
                   tier={comment.display_title_tier}
+                  period={comment.display_title_period}
                   title={`Earned Title: ${comment.display_title}`}
                 >
                   {comment.display_title}

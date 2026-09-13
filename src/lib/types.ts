@@ -59,6 +59,7 @@ export type PublicProfile = {
   rating_count: number;
   display_title: string | null;
   display_title_tier: 1 | 2 | 3 | null;
+  display_title_period: string | null;
 };
 
 /** Lifetime reactions a profile has RECEIVED, from profile_reaction_totals(). */
@@ -95,7 +96,18 @@ export type ProfileTitle = {
   /** Human name for the category, e.g. "Hearts". */
   label: string;
   awarded_at: string;
+  /** First of the month this tier was earned FOR -- not when the job ran. */
+  earned_period: string | null;
 };
+
+/** "September 2026", from a first-of-month date, read as UTC so it never drifts a day. */
+export function periodLabel(period: string): string {
+  return new Date(`${period}T00:00:00Z`).toLocaleDateString(undefined, {
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+}
 
 /** What each tier is called, for the picker and the profile page. */
 export const TIER_LABELS: Record<number, string> = {
@@ -243,6 +255,8 @@ export type CommentRow = {
   display_title: string | null;
   /** Its percentile band, so the Title can be drawn in its tier's neon. */
   display_title_tier: 1 | 2 | 3 | null;
+  /** The month it was first earned, for "September 2026 -- Obsessed". */
+  display_title_period: string | null;
   /** True when this comment was paid for with a premium NOTE. */
   shows_premium_title: boolean;
   like_count: number;

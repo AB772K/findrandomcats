@@ -469,6 +469,38 @@ grant execute on function public.cat_rating_summary(uuid) to anon, authenticated
 grant execute on function public.random_cat(uuid[]) to anon, authenticated;
 grant execute on function public.random_commented_cat(uuid[]) to anon, authenticated;
 
+-- ---------------------------------------- when a title was first earned
+-- The earliest month a profile held a given title. Two sources, because a
+-- title lives in two places: the tier currently held is on profile_badges with
+-- its earned_period; a lower tier held earlier is only in badge_history. Titles
+-- are permanent, so anything in either table was genuinely earned and stays
+-- earned -- which is what makes every one of them selectable for display.
+--
+-- Defined here, ahead of cat_comments() and public_profile() which call it,
+-- and as plpgsql so the body is not validated against tables declared later.
+create or replace function public.title_first_earned(p_profile_id uuid, p_title text)
+returns date
+language plpgsql
+stable
+security definer
+set search_path = public
+as $fn$
+begin
+  return (select min(period) from (
+    select b.earned_period as period
+    from public.profile_badges b
+    join public.badge_titles t on t.category = b.category and t.tier = b.tier
+    where b.profile_id = p_profile_id and t.title = p_title
+    union all
+    select h.period
+    from public.badge_history h
+    where h.profile_id = p_profile_id and h.title = p_title
+  ) x);
+end;
+$fn$;
+
+grant execute on function public.title_first_earned(uuid, text) to anon, authenticated;
+
 -- ------------------------------------------- comments with their authors
 -- Comments live behind RLS and profiles are readable only by their owner, so a
 -- plain join would return nothing for other people's names. Same trick as
@@ -496,6 +528,8 @@ returns table (
   -- The percentile band of the displayed Title, so a comment can be coloured
   -- by tier without a second lookup per row.
   display_title_tier    smallint,
+  -- The month the displayed Title was first earned, for "September 2026 -- Obsessed".
+  display_title_period  date,
   shows_premium_title   boolean,
   is_mine               boolean,
   editable_until        timestamptz,
@@ -533,6 +567,7 @@ as $fn$
               on t.category = b.category and t.tier = b.tier
            where b.profile_id = p.id and t.title = p.premium_display_title
            limit 1),
+         public.title_first_earned(p.id, p.premium_display_title),
          -- The Premium mark is different: it is not an achievement and is not
          -- selectable. It appears exactly when a comment was paid for with a
          -- premium NOTE, so it says something about this comment rather than
@@ -663,7 +698,8 @@ returns table (
   premium_notes_spent integer,
   rating_count        bigint,
   display_title       text,
-  display_title_tier  smallint
+  display_title_tier  smallint,
+  display_title_period date
 )
 language sql
 stable
@@ -685,7 +721,8 @@ as $fn$
             join public.badge_titles t
               on t.category = b.category and t.tier = b.tier
            where b.profile_id = p.id and t.title = p.premium_display_title
-           limit 1)
+           limit 1),
+         public.title_first_earned(p.id, p.premium_display_title)
   from public.profiles p
   where p.id = p_profile_id;
 $fn$;
@@ -1168,6 +1205,21 @@ create table if not exists public.profile_badges (
 
 create index if not exists profile_badges_profile_idx on public.profile_badges (profile_id);
 
+-- The month this tier was earned FOR. awarded_at cannot say that: the job runs
+-- on the 1st and settles the previous month, so awarded_at's calendar month is
+-- one later than the month the standing was actually reached in. This is set
+-- from the settlement's own period, the same value badge_history is stamped
+-- with, so the two agree. Backfilled for rows that predate the column from the
+-- earliest history row for the same tier, else from awarded_at.
+alter table public.profile_badges add column if not exists earned_period date;
+
+update public.profile_badges b
+set earned_period = coalesce(
+      (select min(h.period) from public.badge_history h
+        where h.profile_id = b.profile_id and h.category = b.category and h.tier = b.tier),
+      date_trunc('month', b.awarded_at)::date)
+where b.earned_period is null;
+
 alter table public.badge_titles   enable row level security;
 alter table public.profile_badges enable row level security;
 
@@ -1288,14 +1340,20 @@ begin
       -- so the smaller number wins and a drop from Top 1% to Top 3% leaves the
       -- existing tier alone. Only an improvement restamps awarded_at, so
       -- "held since" keeps meaning the day that tier was reached.
-      insert into public.profile_badges (profile_id, category, tier)
-      select q.profile_id, cat, q.tier from qualified q
+      insert into public.profile_badges (profile_id, category, tier, earned_period)
+      select q.profile_id, cat, q.tier, v_period from qualified q
       on conflict (profile_id, category) do update
         set tier = least(profile_badges.tier, excluded.tier),
             awarded_at = case
                            when excluded.tier < profile_badges.tier
                            then now() else profile_badges.awarded_at
-                         end
+                         end,
+            -- The period moves only with the tier: an improvement was earned
+            -- in this month, holding steady was earned when it was earned.
+            earned_period = case
+                              when excluded.tier < profile_badges.tier
+                              then excluded.earned_period else profile_badges.earned_period
+                            end
       returning profile_id
     )
     select (select count(*)::integer from upserted), 0
@@ -1344,14 +1402,18 @@ revoke all on function public.recompute_profile_badges(date) from public, anon, 
 -- ------------------------------------------------ what a profile holds
 -- Public view of the titles a profile currently holds, for their /u/[id] page
 -- and the picker on /settings. Aggregate-safe: nothing here but the badges.
+-- The return type gains earned_period, so the old signature is dropped rather
+-- than replaced in place.
+drop function if exists public.profile_titles(uuid);
+
 create or replace function public.profile_titles(p_profile_id uuid)
-returns table (category text, tier smallint, title text, label text, awarded_at timestamptz)
+returns table (category text, tier smallint, title text, label text, awarded_at timestamptz, earned_period date)
 language sql
 stable
 security definer
 set search_path = public
 as $fn$
-  select b.category, b.tier, t.title, t.label, b.awarded_at
+  select b.category, b.tier, t.title, t.label, b.awarded_at, b.earned_period
   from public.profile_badges b
   join public.badge_titles t on t.category = b.category and t.tier = b.tier
   where b.profile_id = p_profile_id
@@ -1542,12 +1604,12 @@ begin
     raise exception 'No profile found for this account.' using errcode = 'P0002';
   end if;
 
-  if v_title is not null and not exists (
-    select 1
-    from public.profile_badges b
-    join public.badge_titles t on t.category = b.category and t.tier = b.tier
-    where b.profile_id = v_profile.id and t.title = v_title
-  ) then
+  -- Anything ever earned is selectable, forever. That is profile_badges for the
+  -- tier held now AND badge_history for a lower tier held earlier -- someone who
+  -- was "Regular" in March and is "Addicted" now may still choose to display
+  -- "March 2026 -- Regular". Titles are never revoked, so nothing in either
+  -- table can have stopped being theirs.
+  if v_title is not null and public.title_first_earned(v_profile.id, v_title) is null then
     raise exception 'You have not earned that title.' using errcode = '42501';
   end if;
 

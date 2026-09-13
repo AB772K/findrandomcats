@@ -1,4 +1,4 @@
-import { TIER_NEON } from '@/lib/types';
+import { TIER_NEON, periodLabel } from '@/lib/types';
 
 /**
  * The two kinds of mark that can sit beside a name, deliberately different so
@@ -23,6 +23,7 @@ export default function TitleBadge({
   kind = 'achievement',
   accent,
   tier,
+  period,
   title,
 }: {
   children: React.ReactNode;
@@ -31,6 +32,8 @@ export default function TitleBadge({
   accent?: string | null;
   /** Percentile band, 1 is rarest. Absent falls back to the house blush. */
   tier?: 1 | 2 | 3 | null;
+  /** First-of-month the Title was earned; rendered as "September 2026 -- ". */
+  period?: string | null;
   title?: string;
 }) {
   const base =
@@ -49,10 +52,13 @@ export default function TitleBadge({
   }
 
   const neon = tier ? TIER_NEON[tier] : null;
+  // The month travels with the Title wherever it is shown: a Title is a record
+  // of when you stood there, and the date is half of what makes it one.
+  const when = period ? periodLabel(period) : null;
 
   return (
     <span
-      title={title ?? 'Earned Title'}
+      title={title ?? (when ? `Earned ${when}` : 'Earned Title')}
       className={`${base} ${neon ? 'bg-ink/85' : 'bg-blush-100 text-blush-500'}`}
       style={
         neon
@@ -60,6 +66,7 @@ export default function TitleBadge({
           : undefined
       }
     >
+      {when ? <span className="font-normal opacity-75">{when} — </span> : null}
       {children}
     </span>
   );

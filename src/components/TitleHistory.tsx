@@ -1,24 +1,10 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { TIER_LABELS, TIER_NEON, type ProfileTitleHistoryRow } from '@/lib/types';
+import { TIER_LABELS, TIER_NEON, periodLabel, type ProfileTitleHistoryRow } from '@/lib/types';
 
 /** How many months show before the list asks to be expanded. */
 const VISIBLE_MONTHS = 6;
-
-/**
- * The period is a date-only column, so it must be read as UTC. Parsed in local
- * time, '2026-09-01' becomes the 31st of August anywhere west of Greenwich --
- * and a section whose whole job is naming the right month cannot afford that.
- */
-function monthLabel(period: string): string {
-  const date = new Date(`${period}T00:00:00Z`);
-  return date.toLocaleDateString(undefined, {
-    month: 'long',
-    year: 'numeric',
-    timeZone: 'UTC',
-  });
-}
 
 /**
  * What this profile has held, month by month.
@@ -60,7 +46,7 @@ export default function TitleHistory({ rows }: { rows: ProfileTitleHistoryRow[] 
         {shown.map(({ period, titles }) => (
           <li key={period} className="flex flex-col gap-1.5 sm:flex-row sm:gap-3">
             <span className="shrink-0 pt-0.5 font-display text-xs font-semibold uppercase tracking-wide text-ink/45 sm:w-32">
-              {monthLabel(period)}
+              {periodLabel(period)}
             </span>
             <ul className="flex flex-1 flex-wrap gap-1.5">
               {titles.map((t) => (

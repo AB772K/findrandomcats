@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation';
 import SettingsForm from '@/app/settings/SettingsForm';
 import PasswordSection from '@/app/settings/PasswordSection';
 import TitlePicker from '@/app/settings/TitlePicker';
-import { fetchProfileTitles, getMyProfile } from '@/lib/actions';
+import { fetchProfileTitleHistory, fetchProfileTitles, getMyProfile } from '@/lib/actions';
 import { createClient, getSessionUser } from '@/lib/supabase/server';
 
 export const metadata = { title: 'Your profile · FindRandomCats' };
@@ -22,7 +22,11 @@ export default async function SettingsPage() {
     supabase.from('profiles').select('id').eq('user_id', user.id).maybeSingle(),
   ]);
 
-  const titles = row?.id ? await fetchProfileTitles(row.id) : [];
+  // Both sources: the tier held now, and every earlier tier from history --
+  // Titles are permanent, so all of them are still selectable.
+  const [titles, history] = row?.id
+    ? await Promise.all([fetchProfileTitles(row.id), fetchProfileTitleHistory(row.id)])
+    : [[], []];
 
   return (
     <div className="mx-auto max-w-md animate-fade-up space-y-6">
@@ -48,7 +52,11 @@ export default async function SettingsPage() {
 
       {/* Its own card and its own action: titles are earned, not edited, so
           picking one is a different gesture from saving your bio. */}
-      <TitlePicker titles={titles} selected={profile?.premium_display_title ?? null} />
+      <TitlePicker
+        titles={titles}
+        history={history}
+        selected={profile?.premium_display_title ?? null}
+      />
 
       {/* An account with only a Google identity has no password to change, so
           it is offered one to set instead. changePassword() re-derives this

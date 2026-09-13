@@ -12,6 +12,7 @@ import {
   REACTIONS,
   TIER_LABELS,
   TIER_NEON,
+  periodLabel,
   type Cat,
   type ProfileTitle,
   type ProfileBadge,
@@ -157,6 +158,7 @@ export default async function PublicProfilePage({
               {profile.display_title ? (
                 <TitleBadge
                   tier={profile.display_title_tier}
+                  period={profile.display_title_period}
                   title={`Earned Title: ${profile.display_title}`}
                 >
                   {profile.display_title}
@@ -202,6 +204,7 @@ export default async function PublicProfilePage({
                   {t.title}
                 </span>
                 <span className="text-[11px] text-ink/50">
+                  {t.earned_period ? `${periodLabel(t.earned_period)} · ` : ''}
                   {t.label} · {TIER_LABELS[t.tier]}
                 </span>
               </li>
