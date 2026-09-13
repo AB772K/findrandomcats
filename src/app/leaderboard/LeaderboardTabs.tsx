@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import Avatar from '@/components/Avatar';
 import RewardsPanel, { type TitleRow } from '@/app/leaderboard/RewardsPanel';
 import { fetchLeaderboard } from '@/lib/actions';
@@ -58,6 +58,48 @@ export default function LeaderboardTabs({
     [keyOf(initialScope, initialMetric)]: initialRows,
   });
   const [pending, startTransition] = useTransition();
+  // When the board on screen was last refreshed, so the page can say so.
+  const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
+
+  /**
+   * Live standings for the Monthly board.
+   *
+   * Polling, not Supabase Realtime, and deliberately. Realtime respects RLS,
+   * and the tables a rank is built from -- comment_reactions, notes_spend_log
+   * -- were locked to no client reads on purpose: a subscription would need
+   * exactly those grants back, and would still have to refetch the board on
+   * every event because a rank is an aggregate, not a row. Asking
+   * monthly_leaderboard() again every ten seconds gives the same freshness
+   * through the same security-definer function everything else uses, and
+   * pauses while the tab is hidden so a backgrounded page costs nothing.
+   *
+   * Only Monthly polls: that is the board that moves within a month. All Time
+   * changes on the same events but by a percentile, which no one is watching
+   * tick.
+   */
+  useEffect(() => {
+    if (scope !== 'monthly') return;
+    let cancelled = false;
+
+    async function refresh() {
+      if (document.visibilityState !== 'visible') return;
+      const fresh = await fetchLeaderboard(metric, scope);
+      if (cancelled) return;
+      setCache((prev) => ({ ...prev, [keyOf(scope, metric)]: fresh }));
+      setRows(fresh);
+      setRefreshedAt(new Date());
+    }
+
+    const timer = setInterval(refresh, 10_000);
+    // Coming back to the tab refreshes at once rather than waiting out the
+    // remainder of an interval that ran while nobody was looking.
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [scope, metric]);
 
   function show(nextScope: LeaderboardScope, nextMetric: LeaderboardMetric) {
     if (nextScope === scope && nextMetric === metric) return;
@@ -149,6 +191,11 @@ export default function LeaderboardTabs({
           </h2>
           <span className="text-xs text-ink/45">
             {rows.length > 0 ? `Top ${rows.length}` : 'Top 50'}
+            {scope === 'monthly' ? (
+              <span className="ml-2 text-ink/35" title="Standings refresh every 10 seconds while you watch">
+                · live{refreshedAt ? ` · ${refreshedAt.toLocaleTimeString()}` : ''}
+              </span>
+            ) : null}
           </span>
         </div>
 
