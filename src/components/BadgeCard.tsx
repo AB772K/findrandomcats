@@ -63,8 +63,19 @@ function tierOf(rank: number): MedalTier {
   return rank === 1 || rank === 2 ? rank : 3;
 }
 
+/** The current month as "September 2026", for a badge held live. */
+function thisMonth(): string {
+  const now = new Date();
+  return periodLabel(`${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-01`);
+}
+
+/**
+ * A badge is named by its board and its month, and nothing else: a month's
+ * badge is held or paid exactly once, so there is no number that belongs
+ * beside it. The score it was won with is deliberately not shown here.
+ */
 function describe(badge: AnyBadge) {
-  const when = 'period' in badge ? periodLabel(badge.period) : 'This month';
+  const when = 'period' in badge ? periodLabel(badge.period) : thisMonth();
   const metric = METRIC_LABELS[badge.metric] ?? badge.metric;
   return { when, metric, name: `${metric} — ${when}` };
 }
@@ -180,9 +191,8 @@ function BadgeInspect({ badge, owner, onClose }: { badge: AnyBadge; owner: strin
           name={name}
         />
         <p className="font-display text-lg font-semibold leading-tight">{metric}</p>
-        <p className="text-sm text-paper/60">{when}</p>
-        <p className="mt-1 text-xs text-paper/45">
-          {Number(badge.score).toLocaleString()} {'period' in badge ? 'at the close' : 'so far'} · held by {owner}
+        <p className="mt-1 text-sm text-paper/60">
+          Badge for {when} (held by {owner})
         </p>
         <p className="mt-3 text-[11px] text-paper/35">Drag to spin it round. The name is on the back.</p>
       </div>
