@@ -294,34 +294,30 @@ export default function CommentItem({
                 key={kind}
                 type="button"
                 onClick={() => react(kind)}
-                // aria-disabled rather than disabled for your own comment: a
-                // disabled button fires no click, so the notice could never be
-                // triggered. It stays unusable either way -- react() returns
-                // immediately, and the server refuses regardless.
-                disabled={comment.is_mine ? false : !canReact || reacting}
-                aria-disabled={comment.is_mine || undefined}
+                // Your own comment's bar must be INDISTINGUISHABLE from anyone
+                // else's -- same colours, same hover, same cursor, same tooltip.
+                // The one difference is what a click does: react() shows the
+                // notice instead of reacting, and the server refuses regardless.
+                // An earlier version left the buttons dimmed, aria-disabled and
+                // re-titled after the notice was added, which is why the bar
+                // still read as blurred; none of that survives here.
+                disabled={!comment.is_mine && (!canReact || reacting)}
                 aria-pressed={mine}
                 title={
-                  comment.is_mine
-                    ? "You can't react to your own comment"
-                    : signedIn
-                      ? mine
-                        ? `Remove your ${label.toLowerCase()}`
-                        : label
-                      : 'Sign in to react'
+                  signedIn
+                    ? mine
+                      ? `Remove your ${label.toLowerCase()}`
+                      : label
+                    : 'Sign in to react'
                 }
                 className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium transition duration-200 ${
                   mine
                     ? 'border-blush-400 bg-blush-100 font-semibold text-ink'
                     : 'border-transparent text-ink/75'
                 } ${
-                  comment.is_mine
-                    ? // Clearly inert: dimmed, and the cursor says so before the
-                      // tooltip has a chance to.
-                      'cursor-not-allowed opacity-50'
-                    : signedIn
-                      ? 'hover:border-blush-200 hover:bg-blush-50'
-                      : 'cursor-default opacity-60'
+                  signedIn
+                    ? 'hover:border-blush-200 hover:bg-blush-50'
+                    : 'cursor-default opacity-60'
                 }`}
               >
                 <span aria-hidden className="text-sm leading-none">
