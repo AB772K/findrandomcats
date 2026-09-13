@@ -4,6 +4,7 @@ import Avatar from '@/components/Avatar';
 import DeleteCatButton from '@/components/DeleteCatButton';
 import TitleBadge from '@/components/TitleBadge';
 import BadgeList from '@/components/BadgeCard';
+import TitleCard from '@/components/TitleCard';
 import TitleHistory from '@/components/TitleHistory';
 import SuccessToast from '@/components/SuccessToast';
 import { displayNameOf } from '@/lib/avatar';
@@ -191,22 +192,17 @@ export default async function PublicProfilePage({
               {titles.length} of 6 categories
             </span>
           </div>
-          <ul className="flex flex-wrap gap-2">
+          <ul className="flex flex-wrap gap-4">
             {titles.map((t) => (
-              <li
-                key={`${t.category}-${t.tier}`}
-                className="flex items-center gap-2 rounded-full border border-blush-100 bg-blush-50/60 px-3 py-1.5"
-              >
-                <span
-                  className="font-display text-sm font-semibold"
-                  style={{ color: TIER_NEON[t.tier].color, textShadow: TIER_NEON[t.tier].glow }}
-                >
-                  {t.title}
-                </span>
-                <span className="text-[11px] text-ink/50">
-                  {t.earned_period ? `${periodLabel(t.earned_period)} · ` : ''}
-                  {t.label} · {TIER_LABELS[t.tier]}
-                </span>
+              <li key={`${t.category}-${t.tier}`}>
+                <TitleCard
+                  title={t.title}
+                  tier={t.tier}
+                  label={t.label}
+                  period={t.earned_period}
+                  owner={name}
+                  size="sm"
+                />
               </li>
             ))}
           </ul>
@@ -218,7 +214,7 @@ export default async function PublicProfilePage({
 
       {/* Separate from the section above on purpose: that one answers what they
           hold, this one what they have held. A Title can be in both. */}
-      <TitleHistory rows={history} />
+      <TitleHistory rows={history} owner={name} />
 
       {/* Badges are a different thing from Titles and sit in their own section:
           a live top-three standing on this month's board, which someone can take

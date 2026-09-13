@@ -1,7 +1,8 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { TIER_LABELS, TIER_NEON, periodLabel, type ProfileTitleHistoryRow } from '@/lib/types';
+import TitleCard from '@/components/TitleCard';
+import { periodLabel, type ProfileTitleHistoryRow } from '@/lib/types';
 
 /** How many months show before the list asks to be expanded. */
 const VISIBLE_MONTHS = 6;
@@ -13,7 +14,7 @@ const VISIBLE_MONTHS = 6;
  * says what they hold now, the other what they held then, and a title can
  * honestly be the answer to both.
  */
-export default function TitleHistory({ rows }: { rows: ProfileTitleHistoryRow[] }) {
+export default function TitleHistory({ rows, owner }: { rows: ProfileTitleHistoryRow[]; owner: string }) {
   const [expanded, setExpanded] = useState(false);
 
   // Already ordered newest-first by the query; grouped here so a month reads as
@@ -48,21 +49,17 @@ export default function TitleHistory({ rows }: { rows: ProfileTitleHistoryRow[] 
             <span className="shrink-0 pt-0.5 font-display text-xs font-semibold uppercase tracking-wide text-ink/45 sm:w-32">
               {periodLabel(period)}
             </span>
-            <ul className="flex flex-1 flex-wrap gap-1.5">
+            <ul className="flex flex-1 flex-wrap gap-4">
               {titles.map((t) => (
-                <li
-                  key={`${t.category}-${t.period}`}
-                  className="flex items-center gap-2 rounded-full border border-lilac-200 bg-lilac-50/70 px-3 py-1"
-                >
-                  <span
-                    className="font-display text-sm font-semibold"
-                    style={{ color: TIER_NEON[t.tier].color, textShadow: TIER_NEON[t.tier].glow }}
-                  >
-                    {t.title}
-                  </span>
-                  <span className="text-[11px] text-ink/50">
-                    {t.label} · {TIER_LABELS[t.tier]}
-                  </span>
+                <li key={`${t.category}-${t.period}`}>
+                  <TitleCard
+                    title={t.title}
+                    tier={t.tier}
+                    label={t.label}
+                    period={t.period}
+                    owner={owner}
+                    size="sm"
+                  />
                 </li>
               ))}
             </ul>

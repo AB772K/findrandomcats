@@ -2,10 +2,9 @@
 
 import { useMemo, useState } from 'react';
 import TitleBadge from '@/components/TitleBadge';
+import TitleCard from '@/components/TitleCard';
 import { setDisplayTitle } from '@/lib/actions';
 import {
-  TIER_LABELS,
-  TIER_NEON,
   periodLabel,
   type ProfileTitle,
   type ProfileTitleHistoryRow,
@@ -41,10 +40,13 @@ export default function TitlePicker({
   titles,
   history,
   selected,
+  owner,
 }: {
   titles: ProfileTitle[];
   history: ProfileTitleHistoryRow[];
   selected: string | null;
+  /** The account's display name, printed on each card. */
+  owner: string;
 }) {
   const [current, setCurrent] = useState<string | null>(selected);
   const [busy, setBusy] = useState(false);
@@ -165,7 +167,7 @@ export default function TitlePicker({
                   <p className="font-display text-xs font-semibold uppercase tracking-wide text-ink/45">
                     {month === 'unknown' ? 'Earlier' : periodLabel(month)}
                   </p>
-                  <ul className="flex flex-wrap gap-2">
+                  <ul className="flex flex-wrap gap-4">
                     {list.map((o) => {
                       const on = current === o.title;
                       return (
@@ -175,21 +177,17 @@ export default function TitlePicker({
                             onClick={() => choose(on ? null : o.title)}
                             disabled={busy}
                             aria-pressed={on}
-                            className={`flex items-center gap-2 rounded-full border px-3 py-1.5 transition duration-200 disabled:opacity-50 ${
-                              on
-                                ? 'border-blush-400 bg-blush-50'
-                                : 'border-blush-100 bg-paper hover:border-lilac-200'
-                            }`}
+                            className="rounded-2xl transition duration-200 disabled:opacity-50"
                           >
-                            <span
-                              className="font-display text-sm font-semibold"
-                              style={{ color: TIER_NEON[o.tier].color, textShadow: TIER_NEON[o.tier].glow }}
-                            >
-                              {o.title}
-                            </span>
-                            <span className="text-[11px] text-ink/50">
-                              {o.label} · {TIER_LABELS[o.tier]}
-                            </span>
+                            <TitleCard
+                              title={o.title}
+                              tier={o.tier}
+                              label={o.label}
+                              period={o.period}
+                              owner={owner}
+                              size="sm"
+                              selected={on}
+                            />
                           </button>
                         </li>
                       );

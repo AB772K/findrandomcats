@@ -56,6 +56,7 @@ export default async function SettingsPage() {
         titles={titles}
         history={history}
         selected={profile?.premium_display_title ?? null}
+        owner={profile?.display_name ?? 'You'}
       />
 
       {/* An account with only a Google identity has no password to change, so
