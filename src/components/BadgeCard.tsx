@@ -1,172 +1,139 @@
 'use client';
 
-import { useState } from 'react';
+import Card3D from '@/components/Card3D';
 import {
-  BADGE_RANKS,
   METRIC_LABELS,
+  periodLabel,
   type ProfileBadge,
   type ProfileBadgeHistoryRow,
 } from '@/lib/types';
 
 type AnyBadge = ProfileBadge | ProfileBadgeHistoryRow;
 
-const monthLabel = (period: string) =>
-  new Date(`${period}T00:00:00Z`).toLocaleDateString(undefined, {
-    month: 'long',
-    year: 'numeric',
-    timeZone: 'UTC',
-  });
+/**
+ * Three metals, built from gradients rather than flat colour so they read as
+ * material: a hard diagonal band for the sheen, a soft radial for the dome,
+ * and a darker rim so the disc sits INTO the card rather than on top of it.
+ */
+const METALS: Record<number, { name: string; disc: string; rim: string; ink: string; glow: string }> = {
+  1: {
+    name: 'Gold',
+    disc: 'radial-gradient(circle at 35% 30%, rgba(255,255,255,.65) 0%, rgba(255,255,255,0) 38%), linear-gradient(135deg, #fff3b0 0%, #f5c542 28%, #c98f1c 52%, #f7d774 74%, #8c5e0a 100%)',
+    rim: '#7a4f05',
+    ink: '#5a3a02',
+    glow: 'rgba(255,207,61,.55)',
+  },
+  2: {
+    name: 'Silver',
+    disc: 'radial-gradient(circle at 35% 30%, rgba(255,255,255,.7) 0%, rgba(255,255,255,0) 38%), linear-gradient(135deg, #ffffff 0%, #d9dee6 28%, #8d96a3 52%, #e8ecf1 74%, #5f6873 100%)',
+    rim: '#4b525b',
+    ink: '#2f353c',
+    glow: 'rgba(215,222,232,.5)',
+  },
+  3: {
+    name: 'Bronze',
+    disc: 'radial-gradient(circle at 35% 30%, rgba(255,255,255,.5) 0%, rgba(255,255,255,0) 38%), linear-gradient(135deg, #ffd9b8 0%, #d9884f 28%, #8a4d22 52%, #e6a170 74%, #5a2f10 100%)',
+    rim: '#4a260d',
+    ink: '#3d1f0a',
+    glow: 'rgba(224,160,106,.5)',
+  },
+};
+const ORDINAL: Record<number, string> = { 1: '1st', 2: '2nd', 3: '3rd' };
 
 /**
- * One badge, as a chip you can open.
+ * One Badge as a card: a metal disc for the rank on the front with the badge's
+ * full name -- metric and month -- written out beneath it, and the holder's
+ * name engraved on the back.
  *
- * The chip is deliberately small -- a profile can hold six at once, and six
- * full cards would bury everything else on the page. The card is the reward for
- * tapping.
+ * The engraving is two offset text-shadows, light above and dark below, on a
+ * low-contrast fill: the letters read as pressed into the metal rather than
+ * printed on it. That is the trading-card cue -- a name on the back is what
+ * makes it this person's badge rather than a generic one.
  */
-function Chip({ badge, onOpen }: { badge: AnyBadge; onOpen: () => void }) {
-  const rank = BADGE_RANKS[badge.rank] ?? BADGE_RANKS[3];
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className="flex items-center gap-2 rounded-2xl border border-blush-100 bg-paper px-3 py-2 text-left transition duration-200 hover:-translate-y-0.5 hover:border-lilac-200 hover:shadow-soft"
-    >
-      <span aria-hidden className="text-lg leading-none">{rank.medal}</span>
-      <span className="min-w-0">
-        <span
-          className="block font-display text-sm font-semibold"
-          style={{ color: rank.color, textShadow: rank.glow }}
-        >
-          {rank.label}
-        </span>
-        <span className="block text-[11px] text-ink/50">
-          {METRIC_LABELS[badge.metric] ?? badge.metric}
-          {'period' in badge ? ` · ${monthLabel(badge.period)}` : ''}
-        </span>
-      </span>
-    </button>
-  );
-}
+export function BadgeMedal({ badge, owner, size = 'md' }: { badge: AnyBadge; owner: string; size?: 'sm' | 'md' }) {
+  const metal = METALS[badge.rank] ?? METALS[3];
+  const when = 'period' in badge ? periodLabel(badge.period) : 'This month';
+  const metric = METRIC_LABELS[badge.metric] ?? badge.metric;
+  const name = `${when} — ${metric}`;
+  const w = size === 'sm' ? 150 : 190;
+  const h = size === 'sm' ? 200 : 250;
+  const disc = size === 'sm' ? 84 : 108;
 
-/**
- * The inspect view: the badge as a trading card.
- *
- * The tilt follows the pointer rather than being a fixed hover pose, because
- * the thing being imitated is holding a physical card up to the light. It is a
- * CSS transform on a wrapper -- no 3D library, and it costs nothing when
- * nobody is pointing at it.
- *
- * The owner's name sits behind the artwork as a large, faint watermark. That is
- * what makes the card read as belonging to a person rather than being a generic
- * icon: a certificate is only a certificate because it has a name on it.
- */
-function InspectCard({
-  badge,
-  owner,
-  onClose,
-}: {
-  badge: AnyBadge;
-  owner: string;
-  onClose: () => void;
-}) {
-  const rank = BADGE_RANKS[badge.rank] ?? BADGE_RANKS[3];
-  const [tilt, setTilt] = useState({ x: 0, y: 0 });
-
-  function follow(event: React.PointerEvent<HTMLDivElement>) {
-    const box = event.currentTarget.getBoundingClientRect();
-    // -1..1 from the centre, then a shallow angle: past about 12 degrees the
-    // text starts to distort more than it reads as depth.
-    const px = (event.clientX - box.left) / box.width - 0.5;
-    const py = (event.clientY - box.top) / box.height - 0.5;
-    setTilt({ x: -py * 12, y: px * 12 });
-  }
+  const face = 'absolute inset-0 rounded-2xl border-2 overflow-hidden';
+  const faceStyle = {
+    borderColor: metal.rim,
+    background: `linear-gradient(160deg, #1c1a24 0%, #2a2735 60%, #1a1822 100%)`,
+  };
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={`${rank.label} on ${METRIC_LABELS[badge.metric] ?? badge.metric}`}
-      onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-6 backdrop-blur-sm"
-    >
-      <div
-        onClick={(event) => event.stopPropagation()}
-        onPointerMove={follow}
-        onPointerLeave={() => setTilt({ x: 0, y: 0 })}
-        style={{
-          transform: `perspective(900px) rotateX(${tilt.x}deg) rotateY(${tilt.y}deg)`,
-          transition: 'transform 120ms ease-out',
-          borderColor: rank.color,
-          boxShadow: `0 0 30px ${rank.color}55, 0 20px 45px rgba(0,0,0,.35)`,
-        }}
-        className="relative w-full max-w-xs overflow-hidden rounded-3xl border-2 bg-ink p-7 text-center"
-      >
-        {/* The watermark. aria-hidden because the name is already announced in
-            the card's own label -- a screen reader should not hear it twice. */}
-        <span
-          aria-hidden
-          className="pointer-events-none absolute inset-0 flex items-center justify-center px-2 font-display text-4xl font-bold uppercase leading-none tracking-tight text-paper/[0.07]"
-        >
-          <span className="block break-words">{owner}</span>
-        </span>
-
-        <div className="relative space-y-3">
-          <div aria-hidden className="text-6xl leading-none">{rank.medal}</div>
-          <p
-            className="font-display text-3xl font-bold"
-            style={{ color: rank.color, textShadow: rank.glow }}
-          >
-            {rank.label}
-          </p>
-          <p className="text-sm font-medium text-paper/80">
-            {METRIC_LABELS[badge.metric] ?? badge.metric}
-          </p>
-          <p className="text-xs text-paper/45">
-            {'period' in badge
-              ? `Held at the close of ${monthLabel(badge.period)}`
-              : 'Held right now — until someone takes it'}
-          </p>
-          <p className="text-xs text-paper/45">
-            {Number(badge.score).toLocaleString()} this month
-          </p>
-          <p className="pt-1 text-[11px] uppercase tracking-widest text-paper/35">{owner}</p>
+    <Card3D
+      width={w}
+      height={h}
+      glow={metal.glow}
+      label={`${ORDINAL[badge.rank] ?? badge.rank} place, ${name}, held by ${owner}`}
+      front={
+        <div className={face} style={faceStyle}>
+          <div className="flex h-full flex-col items-center justify-between p-4 text-center">
+            <p className="text-[10px] font-semibold uppercase tracking-[.2em] text-paper/45">
+              {metal.name}
+            </p>
+            <div
+              aria-hidden
+              style={{
+                width: disc,
+                height: disc,
+                background: metal.disc,
+                boxShadow: `inset 0 0 0 3px ${metal.rim}, inset 0 -6px 12px rgba(0,0,0,.35), 0 8px 18px rgba(0,0,0,.45)`,
+              }}
+              className="flex items-center justify-center rounded-full"
+            >
+              <span
+                className="font-display text-3xl font-bold"
+                style={{ color: metal.ink, textShadow: '0 1px 0 rgba(255,255,255,.45)' }}
+              >
+                {ORDINAL[badge.rank] ?? badge.rank}
+              </span>
+            </div>
+            <div className="space-y-0.5">
+              <p className="font-display text-sm font-semibold leading-tight text-paper">{metric}</p>
+              <p className="text-[11px] text-paper/60">{when}</p>
+              <p className="text-[10px] text-paper/40">
+                {Number(badge.score).toLocaleString()} {'period' in badge ? 'at the close' : 'so far'}
+              </p>
+            </div>
+          </div>
         </div>
-
-        <button
-          type="button"
-          onClick={onClose}
-          className="relative mt-5 w-full rounded-full border border-paper/25 px-4 py-1.5 text-xs text-paper/70 transition hover:border-paper/50 hover:text-paper"
-        >
-          Close
-        </button>
-      </div>
-    </div>
+      }
+      back={
+        <div className={face} style={faceStyle}>
+          <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
+            <p className="text-[10px] uppercase tracking-[.2em] text-paper/35">Held by</p>
+            <p
+              className="break-words font-display text-xl font-bold uppercase tracking-wide"
+              style={{
+                color: 'rgba(255,255,255,.22)',
+                textShadow: '0 1px 0 rgba(255,255,255,.28), 0 -1px 0 rgba(0,0,0,.6)',
+              }}
+            >
+              {owner}
+            </p>
+            <p className="mt-2 text-[10px] text-paper/35">{name}</p>
+          </div>
+        </div>
+      }
+    />
   );
 }
 
-export default function BadgeList({
-  badges,
-  owner,
-}: {
-  badges: AnyBadge[];
-  owner: string;
-}) {
-  const [open, setOpen] = useState<number | null>(null);
+export default function BadgeList({ badges, owner }: { badges: AnyBadge[]; owner: string }) {
   if (badges.length === 0) return null;
-
   return (
-    <>
-      <ul className="flex flex-wrap gap-2">
-        {badges.map((badge, index) => (
-          <li key={`${badge.metric}-${'period' in badge ? badge.period : 'now'}`}>
-            <Chip badge={badge} onOpen={() => setOpen(index)} />
-          </li>
-        ))}
-      </ul>
-      {open !== null ? (
-        <InspectCard badge={badges[open]} owner={owner} onClose={() => setOpen(null)} />
-      ) : null}
-    </>
+    <ul className="flex flex-wrap gap-4">
+      {badges.map((badge) => (
+        <li key={`${badge.metric}-${'period' in badge ? badge.period : 'now'}`}>
+          <BadgeMedal badge={badge} owner={owner} size="sm" />
+        </li>
+      ))}
+    </ul>
   );
 }
