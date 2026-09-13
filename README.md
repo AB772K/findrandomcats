@@ -51,7 +51,7 @@ Find a random cat, rate it 1–10, and argue about it in the comments. Next.js 1
 | Comments cost 1 NOTE | `post_comment()` SQL function — picks the wallet, debits it, and inserts in one transaction |
 | Daily / premium wallets | `daily_notes_balance` + `premium_notes_balance` on `profiles`; read via `my_notes()`, topped up by `refresh_daily_notes()` |
 | Notes balance + shop | [`src/app/notes/`](src/app/notes/) |
-| Checkout (placeholder) | [`src/app/checkout/`](src/app/checkout/) — no processor wired up |
+| Checkout (placeholder) | [`src/app/checkout/`](src/app/checkout/) — no processor wired up; the plan is in [PAYMENTS.md](PAYMENTS.md) |
 | Profanity check on comments | [`src/lib/profanity.ts`](src/lib/profanity.ts) (`bad-words`), called from `postComment()` — rejects, never censors |
 | Comment avatars + names | `cat_comments()` SQL function joins each author's public profile fields; rendered by [`Avatar`](src/components/Avatar.tsx) |
 | Public profiles | [`src/app/u/[id]/`](src/app/u/) via `public_profile()` / `profile_rating_summary()` |
