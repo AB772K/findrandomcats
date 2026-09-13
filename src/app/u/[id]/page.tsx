@@ -186,12 +186,10 @@ export default async function PublicProfilePage({
 
       {titles.length > 0 ? (
         <section className="card p-5">
-          <div className="mb-3 flex items-baseline justify-between gap-3">
-            <h2 className="font-display text-base font-semibold">Titles</h2>
-            <span className="text-xs text-ink/45">
-              {titles.length} of 6 categories
-            </span>
-          </div>
+          {/* No count in the heading. "2 of 6" reads as four missing; the
+              section only appears when there is something to show, and what
+              is shown is the whole story. */}
+          <h2 className="mb-3 font-display text-base font-semibold">Titles</h2>
           <ul className="flex flex-wrap gap-4">
             {titles.map((t) => (
               <li key={`${t.category}-${t.tier}`}>
@@ -223,25 +221,18 @@ export default async function PublicProfilePage({
           blank slate. */}
       {badges.length > 0 ? (
         <section className="card p-5">
-          <div className="mb-3 flex items-baseline justify-between gap-3">
-            <h2 className="font-display text-base font-semibold">Badges</h2>
-            <span className="text-xs text-ink/45">Top 3 this month</span>
-          </div>
+          <h2 className="mb-3 font-display text-base font-semibold">Badges</h2>
           <BadgeList badges={badges} owner={name} />
           <p className="mt-3 text-[11px] text-ink/40">
-            Held right now. Badges change hands the moment someone overtakes you.
+            Top three on this month&apos;s board, held right now. Badges change hands the moment
+            someone overtakes you.
           </p>
         </section>
       ) : null}
 
       {badgeHistory.length > 0 ? (
         <section className="card p-5">
-          <div className="mb-3 flex items-baseline justify-between gap-3">
-            <h2 className="font-display text-base font-semibold">Badge history</h2>
-            <span className="text-xs text-ink/45">
-              {badgeHistory.length} {badgeHistory.length === 1 ? 'badge' : 'badges'}
-            </span>
-          </div>
+          <h2 className="mb-3 font-display text-base font-semibold">Badge history</h2>
           <BadgeList badges={badgeHistory} owner={name} />
           <p className="mt-3 text-[11px] text-ink/40">
             Badges still held when a month closed, and paid out for it.

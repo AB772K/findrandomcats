@@ -36,12 +36,7 @@ export default function TitleHistory({ rows, owner }: { rows: ProfileTitleHistor
 
   return (
     <section className="card p-5">
-      <div className="mb-3 flex items-baseline justify-between gap-3">
-        <h2 className="font-display text-base font-semibold">Title history</h2>
-        <span className="text-xs text-ink/45">
-          {months.length} {months.length === 1 ? 'month' : 'months'}
-        </span>
-      </div>
+      <h2 className="mb-3 font-display text-base font-semibold">Title history</h2>
 
       <ol className="space-y-3">
         {shown.map(({ period, titles }) => (
